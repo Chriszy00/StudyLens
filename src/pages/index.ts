@@ -1,0 +1,12 @@
+export { LoginPage } from './LoginPage'
+export { RegisterPage } from './RegisterPage'
+export { LibraryPage } from './LibraryPage'
+export { UploadPage } from './UploadPage'
+export { DeckOverviewPage } from './DeckOverviewPage'
+export { FlashcardsPage } from './FlashcardsPage'
+export { AnalysisPage } from './AnalysisPage'
+export { SettingsPage } from './SettingsPage'
+export { StatesGalleryPage } from './StatesGalleryPage'
+export { MethodologyPage } from './MethodologyPage'
+export { StudyPage } from './StudyPage'
+
