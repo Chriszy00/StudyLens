@@ -128,7 +128,7 @@ export function useCreateDocument() {
             console.log('🆕 [useCreateDocument] ✅ Document created with ID:', result.id)
             return result
         },
-        onSuccess: (data) => {
+        onSuccess: (_data) => {
             console.log('🆕 [useCreateDocument] 🎯 onSuccess triggered!')
             console.log('🆕 [useCreateDocument] 📋 Invalidating query key:', documentKeys.lists())
 
