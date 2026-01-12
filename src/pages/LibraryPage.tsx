@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { Header, PageWrapper } from "@/components/layout"
 import { useDocuments } from "@/hooks"
@@ -46,7 +46,21 @@ export function LibraryPage() {
 
     // Use our custom hook instead of raw useQuery
     // This encapsulates the query key and fetch logic
-    const { data: documents = [], isLoading: loading, isError: error, refetch: handleRetry } = useDocuments(activeFilter)
+    const { data: documents = [], isLoading: loading, isError: error, refetch: handleRetry, dataUpdatedAt } = useDocuments(activeFilter)
+
+    // 🔍 DIAGNOSTIC: Log when LibraryPage mounts/updates
+    useEffect(() => {
+        console.log('📖 [LibraryPage] Component MOUNTED')
+        return () => console.log('📖 [LibraryPage] Component UNMOUNTED')
+    }, [])
+
+    useEffect(() => {
+        console.log('📖 [LibraryPage] Documents updated:', {
+            count: documents.length,
+            titles: documents.map(d => d.title),
+            dataUpdatedAt: new Date(dataUpdatedAt).toISOString(),
+        })
+    }, [documents, dataUpdatedAt])
 
     // Filter documents by search query
     const filteredDocuments = documents.filter((doc: DocumentWithMeta) =>

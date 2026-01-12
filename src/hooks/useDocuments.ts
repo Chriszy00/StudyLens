@@ -52,12 +52,31 @@ export const documentKeys = {
  * const { data: documents, isLoading } = useDocuments('starred')
  */
 export function useDocuments(filter: DocumentFilter = 'all') {
-    return useQuery({
+    console.log('📚 [useDocuments] Hook called with filter:', filter)
+
+    const query = useQuery({
         queryKey: documentKeys.list(filter),
-        queryFn: () => getDocuments(filter),
-        // Documents list can be slightly stale - reduce refetches
-        staleTime: 1000 * 60 * 2, // 2 minutes
+        queryFn: async () => {
+            console.log('📚 [useDocuments] 🔄 FETCHING documents from Supabase...')
+            const result = await getDocuments(filter)
+            console.log('📚 [useDocuments] ✅ Fetched', result.length, 'documents')
+            return result
+        },
+        // IMPORTANT: Always refetch when component mounts to ensure fresh data
+        // This is crucial for seeing newly uploaded documents
+        refetchOnMount: 'always',
+        // Keep stale time low for document lists - we want fresh data
+        staleTime: 1000 * 5, // 5 seconds (was 2 minutes - too long!)
     })
+
+    console.log('📚 [useDocuments] Query state:', {
+        status: query.status,
+        fetchStatus: query.fetchStatus,
+        dataLength: query.data?.length ?? 0,
+        isStale: query.isStale,
+    })
+
+    return query
 }
 
 /**
@@ -100,13 +119,30 @@ export function useDocument(id: string | null | undefined) {
  */
 export function useCreateDocument() {
     const queryClient = useQueryClient()
+    console.log('🆕 [useCreateDocument] Hook initialized')
 
     return useMutation({
-        mutationFn: (document: Omit<DocumentInsert, 'user_id'>) =>
-            createDocument(document),
-        onSuccess: () => {
+        mutationFn: async (document: Omit<DocumentInsert, 'user_id'>) => {
+            console.log('🆕 [useCreateDocument] 🚀 MUTATION STARTED - creating document:', document.title)
+            const result = await createDocument(document)
+            console.log('🆕 [useCreateDocument] ✅ Document created with ID:', result.id)
+            return result
+        },
+        onSuccess: (data) => {
+            console.log('🆕 [useCreateDocument] 🎯 onSuccess triggered!')
+            console.log('🆕 [useCreateDocument] 📋 Invalidating query key:', documentKeys.lists())
+
+            // Log current cache state before invalidation
+            const cachedQueries = queryClient.getQueriesData({ queryKey: documentKeys.lists() })
+            console.log('🆕 [useCreateDocument] 📦 Cache BEFORE invalidation:', cachedQueries.length, 'queries cached')
+
             // Invalidate all document lists to show the new document
             queryClient.invalidateQueries({ queryKey: documentKeys.lists() })
+
+            console.log('🆕 [useCreateDocument] ✅ Cache invalidation dispatched')
+        },
+        onError: (error) => {
+            console.error('🆕 [useCreateDocument] ❌ Mutation FAILED:', error)
         },
     })
 }

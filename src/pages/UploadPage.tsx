@@ -2,7 +2,8 @@ import { useState, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { Header, PageWrapper } from "@/components/layout"
 import { uploadFile, extractTextFromFile, validateFile } from "@/services/storage"
-import { createDocument, estimateReadTime } from "@/services/documents"
+import { estimateReadTime } from "@/services/documents"
+import { useCreateDocument } from "@/hooks"
 import { useAuth } from "@/contexts/AuthContext"
 
 type SummaryType = "short" | "detailed" | "study_notes"
@@ -11,6 +12,7 @@ export function UploadPage() {
     const navigate = useNavigate()
     const { user } = useAuth()
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const createDocumentMutation = useCreateDocument()
 
     // Form state
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -75,11 +77,11 @@ export function UploadPage() {
                 // Upload file - now shows better progress since file is read into memory first
                 console.log('📤 Uploading file:', selectedFile.name)
                 setUploadProgress("Reading file into memory...")
-                
+
                 // Short delay to show the reading message (the actual read happens in uploadFile)
                 await new Promise(resolve => setTimeout(resolve, 100))
                 setUploadProgress("Uploading to cloud storage...")
-                
+
                 const uploadStart = Date.now()
                 const uploadResult = await uploadFile(selectedFile, user?.id)
                 console.log(`✅ File uploaded in ${Date.now() - uploadStart}ms`)
@@ -101,7 +103,7 @@ export function UploadPage() {
             console.log('💾 Creating document record in Supabase...')
             setUploadProgress("Creating document...")
             const createStart = Date.now()
-            const document = await createDocument({
+            const document = await createDocumentMutation.mutateAsync({
                 title: title.trim(),
                 type: summaryType,
                 original_filename: originalFilename,
