@@ -14,6 +14,7 @@ export function SettingsPage() {
     const [email, setEmail] = useState("")
     const [summaryLength, setSummaryLength] = useState<"Med" | "Long">("Med")
     const [autoSave, setAutoSave] = useState(true)
+    const [isSigningOut, setIsSigningOut] = useState(false)
 
     // Sync user data to form when user loads
     useEffect(() => {
@@ -38,7 +39,11 @@ export function SettingsPage() {
     }
 
     const handleSignOut = async () => {
+        console.log('SettingsPage: Sign Out button clicked')
+        setIsSigningOut(true)
+        console.log('SettingsPage: calling signOut()')
         await signOut()
+        console.log('SettingsPage: signOut() returned, navigating to login')
         navigate("/login")
     }
 
@@ -85,9 +90,10 @@ export function SettingsPage() {
                             </button>
                             <button
                                 onClick={handleSignOut}
-                                className="w-full py-3 px-8 rounded-xl border border-red-500/30 text-red-500 font-semibold text-sm hover:bg-red-500/10 transition-colors"
+                                disabled={isSigningOut}
+                                className="w-full py-3 px-8 rounded-xl border border-red-500/30 text-red-500 font-semibold text-sm hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                Sign Out
+                                {isSigningOut ? "Signing Out..." : "Sign Out"}
                             </button>
                         </div>
                     </div>

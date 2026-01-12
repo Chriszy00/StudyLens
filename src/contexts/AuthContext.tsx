@@ -88,7 +88,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const signOut = async () => {
-        await supabase.auth.signOut()
+        console.log('AuthContext: signOut initiated')
+        try {
+            // Attempt to sign out from Supabase with a timeout
+            // If the network call hangs, we don't want to block the user
+            const { error } = await Promise.race([
+                supabase.auth.signOut(),
+                new Promise<{ error: null }>((resolve) =>
+                    setTimeout(() => {
+                        console.log('AuthContext: signOut timed out, forcing local cleanup')
+                        resolve({ error: null })
+                    }, 2000)
+                )
+            ])
+
+            if (error) {
+                console.error('AuthContext: Supabase signOut returned error:', error)
+            } else {
+                console.log('AuthContext: supabase.auth.signOut completed')
+            }
+        } catch (error) {
+            console.error('AuthContext: Error during supabase.auth.signOut', error)
+        } finally {
+            // Force clear state to ensure immediate UI update
+            console.log('AuthContext: clearing local session and user state')
+            setSession(null)
+            setUser(null)
+            // Optional: Manually clear any persisted session from localStorage if needed
+            // This is a failsafe if Supabase client internal storage clearing failed
+            localStorage.removeItem(`sb-${import.meta.env.VITE_SUPABASE_URL?.split('//')[1].split('.')[0]}-auth-token`)
+        }
     }
 
     return (
