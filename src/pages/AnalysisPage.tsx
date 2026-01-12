@@ -311,12 +311,130 @@ export function AnalysisPage() {
     if (isLoading) {
         return (
             <PageWrapper>
-                <Header title="Loading..." showBack onBack={() => navigate("/library")} />
-                <div className="flex items-center justify-center py-20">
-                    <div className="flex flex-col items-center gap-4">
-                        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-                        <p className="text-[var(--muted-foreground)]">Loading document...</p>
+                <Header
+                    title={
+                        <div className="h-6 w-48 bg-[var(--muted)] rounded animate-pulse" />
+                    }
+                    showBack
+                    onBack={() => navigate("/library")}
+                    rightAction={
+                        <div className="flex items-center gap-2">
+                            <div className="h-10 w-28 bg-[var(--muted)] rounded-lg animate-pulse" />
+                            <div className="h-10 w-10 bg-[var(--muted)] rounded-full animate-pulse" />
+                        </div>
+                    }
+                />
+                <div className="py-8">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        {/* Left Column - Source Document Skeleton */}
+                        <div className="lg:col-span-1">
+                            <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm overflow-hidden h-[60vh]">
+                                {/* Header Skeleton */}
+                                <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] bg-[var(--muted)]/30">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-5 h-5 bg-primary/30 rounded animate-pulse" />
+                                        <div className="h-4 w-32 bg-[var(--muted)] rounded animate-pulse" />
+                                    </div>
+                                </div>
+                                {/* Content Skeleton */}
+                                <div className="p-5 space-y-3">
+                                    {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+                                        <div
+                                            key={i}
+                                            className="h-4 bg-[var(--muted)] rounded animate-pulse"
+                                            style={{
+                                                width: `${70 + (i % 3) * 10}%`,
+                                                animationDelay: `${i * 50}ms`
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Right Column - Summary Skeleton */}
+                        <div className="lg:col-span-2 space-y-6">
+                            {/* Summary Card Skeleton */}
+                            <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm overflow-hidden">
+                                {/* Tabs Skeleton */}
+                                <div className="flex border-b border-[var(--border)] px-5 gap-6">
+                                    {[1, 2, 3].map((i) => (
+                                        <div
+                                            key={i}
+                                            className="py-4 border-b-[3px] border-b-transparent"
+                                        >
+                                            <div
+                                                className="h-4 w-16 bg-[var(--muted)] rounded animate-pulse"
+                                                style={{ animationDelay: `${i * 100}ms` }}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                                {/* Content Skeleton */}
+                                <div className="p-6 space-y-4">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <div className="w-6 h-6 bg-primary/30 rounded animate-pulse" />
+                                        <div className="h-3 w-24 bg-[var(--muted)] rounded animate-pulse" />
+                                    </div>
+                                    <div className="space-y-3">
+                                        {[1, 2, 3, 4, 5].map((i) => (
+                                            <div
+                                                key={i}
+                                                className="h-5 bg-[var(--muted)] rounded animate-pulse"
+                                                style={{
+                                                    width: `${85 + (i % 2) * 10}%`,
+                                                    animationDelay: `${i * 80}ms`
+                                                }}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Metrics Grid Skeleton */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {[1, 2].map((i) => (
+                                    <div
+                                        key={i}
+                                        className="bg-[var(--card)] p-5 rounded-xl border border-[var(--border)] shadow-sm"
+                                    >
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <div className="w-6 h-6 bg-primary/30 rounded animate-pulse" />
+                                            <div className="h-4 w-28 bg-[var(--muted)] rounded animate-pulse" />
+                                        </div>
+                                        <div className="h-10 w-20 bg-[var(--muted)] rounded animate-pulse mb-2" />
+                                        <div className="h-3 w-32 bg-[var(--muted)] rounded animate-pulse" />
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Keywords Skeleton */}
+                            <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm overflow-hidden">
+                                <div className="flex items-center gap-2 px-6 py-4 border-b border-[var(--border)] bg-[var(--muted)]/30">
+                                    <div className="w-5 h-5 bg-primary/30 rounded animate-pulse" />
+                                    <div className="h-4 w-20 bg-[var(--muted)] rounded animate-pulse" />
+                                </div>
+                                <div className="p-6 flex flex-wrap gap-2">
+                                    {[1, 2, 3, 4, 5, 6].map((i) => (
+                                        <div
+                                            key={i}
+                                            className="h-8 bg-primary/10 rounded-full animate-pulse"
+                                            style={{
+                                                width: `${60 + (i % 3) * 20}px`,
+                                                animationDelay: `${i * 60}ms`
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
                     </div>
+                </div>
+
+                {/* Loading Message */}
+                <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-[var(--card)] px-6 py-3 rounded-full shadow-lg border border-[var(--border)] flex items-center gap-3">
+                    <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm text-[var(--muted-foreground)]">Loading document analysis...</span>
                 </div>
             </PageWrapper>
         )

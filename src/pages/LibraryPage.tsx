@@ -133,14 +133,44 @@ export function LibraryPage() {
                     </div>
                 </div>
 
-                {/* Loading State */}
+                {/* Loading State - Skeleton Grid */}
                 {loading && (
-                    <div className="flex items-center justify-center py-20">
-                        <div className="flex flex-col items-center gap-4">
-                            <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-                            <p className="text-[var(--muted-foreground)] text-sm">Loading documents...</p>
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {[1, 2, 3, 4, 5, 6].map((i) => (
+                                <div
+                                    key={i}
+                                    className="flex flex-col rounded-xl shadow-sm border border-[var(--border)] bg-[var(--card)] overflow-hidden"
+                                    style={{ animationDelay: `${i * 100}ms` }}
+                                >
+                                    {/* Header Skeleton */}
+                                    <div className="relative w-full h-32 bg-[var(--muted)] animate-pulse">
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                            <div className="w-14 h-14 bg-[var(--muted)]/70 rounded-full animate-pulse" />
+                                        </div>
+                                    </div>
+                                    {/* Content Skeleton */}
+                                    <div className="p-5 space-y-3">
+                                        <div className="h-5 bg-[var(--muted)] rounded w-3/4 animate-pulse" />
+                                        <div className="h-4 bg-[var(--muted)] rounded w-1/2 animate-pulse" />
+                                        <div className="flex gap-2 pt-2">
+                                            <div className="h-6 bg-[var(--muted)] rounded-md w-16 animate-pulse" />
+                                            <div className="h-6 bg-[var(--muted)] rounded-md w-16 animate-pulse" />
+                                        </div>
+                                        <div className="flex gap-2 mt-auto pt-2">
+                                            <div className="h-10 flex-1 bg-[var(--muted)] rounded-lg animate-pulse" />
+                                            <div className="h-10 flex-1 bg-[var(--muted)] rounded-lg animate-pulse" />
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
-                    </div>
+                        {/* Loading Indicator */}
+                        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-[var(--card)] px-6 py-3 rounded-full shadow-lg border border-[var(--border)] flex items-center gap-3">
+                            <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                            <span className="text-sm text-[var(--muted-foreground)]">Loading your library...</span>
+                        </div>
+                    </>
                 )}
 
                 {/* Error State */}

@@ -161,15 +161,69 @@ export function StudyPage() {
     if (loading) {
         return (
             <PageWrapper>
-                <Header title="Study Mode" showBack onBack={() => navigate(-1)} />
-                <div className="flex items-center justify-center py-20">
-                    <div className="flex flex-col items-center gap-4">
-                        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-                        <p className="text-[var(--muted-foreground)]">
+                <Header
+                    title="Study Mode"
+                    showBack
+                    onBack={() => navigate(-1)}
+                    rightAction={
+                        <div className="h-4 w-16 bg-[var(--muted)] rounded animate-pulse" />
+                    }
+                />
+                <div className="py-8 max-w-2xl mx-auto">
+                    {/* Skeleton Progress Bar */}
+                    <div className="mb-8">
+                        <div className="h-2 bg-[var(--muted)] rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-primary/30 rounded-full animate-pulse"
+                                style={{ width: '30%' }}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Skeleton Flashcard */}
+                    <div className="min-h-[300px] bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-lg overflow-hidden">
+                        {/* Difficulty Badge Skeleton */}
+                        <div className="absolute top-4 right-4">
+                            <div className="h-6 w-16 bg-[var(--muted)] rounded-full animate-pulse" />
+                        </div>
+
+                        {/* Card Content Skeleton */}
+                        <div className="flex flex-col items-center justify-center min-h-[300px] p-8">
+                            <div className="w-12 h-12 bg-primary/20 rounded-full mb-6 animate-pulse" />
+                            <div className="space-y-3 w-full max-w-md">
+                                <div className="h-6 bg-[var(--muted)] rounded w-full animate-pulse" />
+                                <div className="h-6 bg-[var(--muted)] rounded w-3/4 mx-auto animate-pulse" />
+                                <div className="h-6 bg-[var(--muted)] rounded w-1/2 mx-auto animate-pulse" />
+                            </div>
+                            <div className="h-4 w-32 bg-[var(--muted)] rounded mt-8 animate-pulse" />
+                        </div>
+                    </div>
+
+                    {/* Skeleton Rating Buttons */}
+                    <div className="mt-8 space-y-4">
+                        <div className="h-4 w-48 bg-[var(--muted)] rounded mx-auto animate-pulse" />
+                        <div className="grid grid-cols-4 gap-3">
+                            {[1, 2, 3, 4].map((i) => (
+                                <div
+                                    key={i}
+                                    className="py-4 px-2 bg-[var(--muted)] rounded-xl animate-pulse"
+                                    style={{ animationDelay: `${i * 100}ms` }}
+                                >
+                                    <div className="h-6 w-6 bg-[var(--muted)]/70 rounded-full mx-auto mb-2" />
+                                    <div className="h-3 w-10 bg-[var(--muted)]/70 rounded mx-auto" />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Loading Message */}
+                    <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-[var(--card)] px-6 py-3 rounded-full shadow-lg border border-[var(--border)] flex items-center gap-3">
+                        <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        <span className="text-sm text-[var(--muted-foreground)]">
                             {generateMutation.isPending
                                 ? "Generating flashcards..."
                                 : "Loading flashcards..."}
-                        </p>
+                        </span>
                     </div>
                 </div>
             </PageWrapper>
