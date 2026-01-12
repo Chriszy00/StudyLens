@@ -1,10 +1,13 @@
-import { useState, useRef } from "react"
+import { useState, useRef, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { Header, PageWrapper } from "@/components/layout"
-import { uploadFile, extractTextFromFile, validateFile } from "@/services/storage"
+import { uploadFileWithProgress, extractTextFromFile, validateFile } from "@/services/storage"
+import type { UploadProgressInfo } from "@/services/storage"
 import { estimateReadTime } from "@/services/documents"
 import { useCreateDocument } from "@/hooks"
 import { useAuth } from "@/contexts/AuthContext"
+import { UploadOverlay } from "@/components/UploadOverlay"
+import type { UploadProgress } from "@/components/UploadOverlay"
 
 type SummaryType = "short" | "detailed" | "study_notes"
 
@@ -28,7 +31,16 @@ export function UploadPage() {
     // UI state
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
-    const [uploadProgress, setUploadProgress] = useState<string>("")
+    const [uploadMessage, setUploadMessage] = useState<string>("")
+
+    // Progress Overlay State
+    const [showOverlay, setShowOverlay] = useState(false)
+    const [progressState, setProgressState] = useState<UploadProgress>({
+        stage: 'reading',
+        percent: 0,
+        message: 'Preparing...',
+    })
+    const abortControllerRef = useRef<AbortController | null>(null)
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -50,6 +62,15 @@ export function UploadPage() {
         }
     }
 
+    const handleCancelUpload = useCallback(() => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort()
+            abortControllerRef.current = null
+        }
+        setShowOverlay(false)
+        setLoading(false)
+    }, [])
+
     const handleAnalyze = async () => {
         // Validation
         if (!selectedFile && !textContent.trim()) {
@@ -65,43 +86,81 @@ export function UploadPage() {
         const startTime = Date.now()
         console.log('🚀 Starting document creation...')
 
-        try {
-            setLoading(true)
-            setError(null)
+        // Reset state
+        setError(null)
+        setLoading(true)
+        setShowOverlay(true)
+        setUploadMessage("Initializing...")
 
+        // Initialize progress
+        setProgressState({
+            stage: 'reading',
+            percent: 0,
+            message: 'Initializing...',
+        })
+
+        // Create new AbortController
+        const controller = new AbortController()
+        abortControllerRef.current = controller
+
+        try {
             let storagePath: string | undefined
             let originalText: string
             let originalFilename: string | undefined
 
             if (selectedFile) {
-                // Upload file - now shows better progress since file is read into memory first
                 console.log('📤 Uploading file:', selectedFile.name)
-                setUploadProgress("Reading file into memory...")
-
-                // Short delay to show the reading message (the actual read happens in uploadFile)
-                await new Promise(resolve => setTimeout(resolve, 100))
-                setUploadProgress("Uploading to cloud storage...")
-
-                const uploadStart = Date.now()
-                const uploadResult = await uploadFile(selectedFile, user?.id)
-                console.log(`✅ File uploaded in ${Date.now() - uploadStart}ms`)
-                storagePath = uploadResult.path
                 originalFilename = selectedFile.name
 
-                // Extract text from file
+                // Upload with progress
+                const uploadResult = await uploadFileWithProgress(selectedFile, {
+                    userId: user?.id,
+                    abortSignal: controller.signal,
+                    onProgress: (info: UploadProgressInfo) => {
+                        setProgressState({
+                            stage: info.stage,
+                            percent: info.percent,
+                            message: info.message,
+                            bytesUploaded: info.bytesUploaded,
+                            totalBytes: info.totalBytes,
+                            speed: info.speed,
+                            timeRemaining: info.timeRemaining,
+                        })
+                        setUploadMessage(info.message)
+                    }
+                })
+
+                console.log(`✅ File uploaded in ${Date.now() - startTime}ms`)
+                storagePath = uploadResult.path
+
+                // Extract text
+                if (controller.signal.aborted) throw new Error('Upload cancelled')
+
+                setProgressState(prev => ({ ...prev, stage: 'processing', message: 'Extracting text content...', percent: 100 }))
+                setUploadMessage("Extracting text...")
+
                 console.log('📝 Extracting text...')
-                setUploadProgress("Extracting text...")
                 const extractStart = Date.now()
                 originalText = await extractTextFromFile(selectedFile)
-                console.log(`✅ Text extracted in ${Date.now() - extractStart}ms, length: ${originalText.length}`)
+                console.log(`✅ Text extracted in ${Date.now() - extractStart}ms`)
+
             } else {
-                console.log('📝 Using pasted text, length:', textContent.trim().length)
+                console.log('📝 Using pasted text')
                 originalText = textContent.trim()
+                setProgressState({
+                    stage: 'processing',
+                    percent: 50,
+                    message: 'Processing text content...',
+                })
             }
 
             // Create document record
-            console.log('💾 Creating document record in Supabase...')
-            setUploadProgress("Creating document...")
+            if (controller.signal.aborted) throw new Error('Upload cancelled')
+
+            console.log('💾 Creating document record...')
+            setProgressState(prev => ({ ...prev, stage: 'processing', message: 'Creating document record...', percent: 100 }))
+            setUploadMessage("Creating document...")
+
             const createStart = Date.now()
             const document = await createDocumentMutation.mutateAsync({
                 title: title.trim(),
@@ -112,27 +171,38 @@ export function UploadPage() {
                 read_time_minutes: estimateReadTime(originalText),
                 is_draft: true, // Mark as draft until AI processing is complete
             })
-            console.log(`✅ Document created in ${Date.now() - createStart}ms, ID:`, document.id)
+            console.log(`✅ Document created in ${Date.now() - createStart}ms`)
 
-            console.log(`🎉 Total time: ${Date.now() - startTime}ms`)
+            // Success state
+            setProgressState(prev => ({ ...prev, stage: 'complete', message: 'Analysis ready!', percent: 100 }))
 
-            // Navigate to analysis page with document ID and processing options
-            // The options tell the AI what to generate
+            // Short delay to show success
+            await new Promise(resolve => setTimeout(resolve, 1000))
+
+            // Navigate
             const params = new URLSearchParams({
                 id: document.id,
                 keywords: keywordExtraction.toString(),
                 metrics: summaryMetrics.toString(),
                 questions: studyQuestions.toString(),
-                autoProcess: 'true', // Signal to auto-start processing
+                autoProcess: 'true',
             })
             navigate(`/analysis?${params.toString()}`)
+
         } catch (err) {
-            console.error("❌ Error creating document:", err)
-            console.error(`⏱️ Failed after ${Date.now() - startTime}ms`)
-            setError(err instanceof Error ? err.message : "Failed to create document")
+            const error = err as Error
+            console.error("❌ Process failed:", error)
+
+            if (error.message === 'Upload cancelled') {
+                setShowOverlay(false)
+            } else {
+                setError(error.message || "Failed to process document")
+                setProgressState(prev => ({ ...prev, stage: 'error', message: error.message || 'Error occurred' }))
+                // Keep overlay open on error so user can see what happened
+            }
         } finally {
             setLoading(false)
-            setUploadProgress("")
+            abortControllerRef.current = null
         }
     }
 
@@ -415,7 +485,7 @@ export function UploadPage() {
                             {loading ? (
                                 <>
                                     <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                    <span>{uploadProgress || "Processing..."}</span>
+                                    <span>{uploadMessage || "Processing..."}</span>
                                 </>
                             ) : (
                                 <>
@@ -430,6 +500,14 @@ export function UploadPage() {
                     </div>
                 </div>
             </div>
+
+            <UploadOverlay
+                isVisible={showOverlay}
+                fileName={selectedFile?.name || "Text Document"}
+                fileSize={selectedFile?.size || textContent.length}
+                progress={progressState}
+                onCancel={handleCancelUpload}
+            />
         </PageWrapper>
     )
 }

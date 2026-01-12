@@ -119,7 +119,7 @@ export function useDocument(id: string | null | undefined) {
  */
 export function useCreateDocument() {
     const queryClient = useQueryClient()
-    console.log('🆕 [useCreateDocument] Hook initialized')
+    // Note: Don't log here - this runs on every render which causes spam during uploads
 
     return useMutation({
         mutationFn: async (document: Omit<DocumentInsert, 'user_id'>) => {

@@ -307,6 +307,54 @@ export interface Database {
                 }
                 Relationships: []
             }
+            app_settings: {
+                Row: {
+                    id: string
+                    summary_enabled: boolean
+                    maintenance_mode: boolean
+                    maintenance_message: string | null
+                    updated_at: string
+                    updated_by: string | null
+                }
+                Insert: {
+                    id?: string
+                    summary_enabled?: boolean
+                    maintenance_mode?: boolean
+                    maintenance_message?: string | null
+                    updated_at?: string
+                    updated_by?: string | null
+                }
+                Update: {
+                    id?: string
+                    summary_enabled?: boolean
+                    maintenance_mode?: boolean
+                    maintenance_message?: string | null
+                    updated_at?: string
+                    updated_by?: string | null
+                }
+                Relationships: []
+            }
+            admin_users: {
+                Row: {
+                    id: string
+                    user_id: string
+                    created_at: string
+                    created_by: string | null
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    created_at?: string
+                    created_by?: string | null
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    created_at?: string
+                    created_by?: string | null
+                }
+                Relationships: []
+            }
         }
         Views: {
             [_ in never]: never

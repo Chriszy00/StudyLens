@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { Header, PageWrapper } from "@/components/layout"
+import { FileViewer } from "@/components/FileViewer"
 import { useDocument, useSummary, useProcessDocument } from "@/hooks"
+import { useAdmin } from "@/contexts/AdminContext"
 import type { StudyQuestion } from "@/services/ai"
 
 const summaryTabs = ["Short", "Detailed", "Bullets"]
@@ -11,6 +13,13 @@ export function AnalysisPage() {
     const [searchParams] = useSearchParams()
     const documentId = searchParams.get("id")
 
+    // Admin context - check if summary feature is enabled
+    const { settings, isLoadingSettings } = useAdmin()
+    const isSummaryEnabled = settings?.summary_enabled !== false // Default to true if settings not loaded
+
+    // State for full screen file viewer
+    const [showFileViewer, setShowFileViewer] = useState(false)
+
     // Read processing options from URL params (set by UploadPage)
     const autoProcess = searchParams.get("autoProcess") === "true"
     const extractKeywords = searchParams.get("keywords") !== "false" // default true
@@ -19,6 +28,7 @@ export function AnalysisPage() {
 
     const [activeTab, setActiveTab] = useState("Short")
     const [highlightKeywords, setHighlightKeywords] = useState(true)
+    const [viewMode, setViewMode] = useState<'text' | 'file'>('file')
 
     // Track if we've already triggered auto-processing
     const hasAutoProcessed = useRef(false)
@@ -70,9 +80,15 @@ export function AnalysisPage() {
                     break
             }
         }
-    }, [document?.type])
+
+        // Default to text view if no file is available
+        if (document && !document.storage_path) {
+            setViewMode('text')
+        }
+    }, [document?.type, document?.storage_path])
 
     // Auto-trigger processing for new documents (coming from UploadPage)
+    // Only triggers if summary feature is enabled by admin
     useEffect(() => {
         if (
             autoProcess &&
@@ -80,7 +96,9 @@ export function AnalysisPage() {
             !hasAutoProcessed.current &&
             !summary && // No existing summary
             !generateMutation.isPending &&
-            !isLoadingSummary
+            !isLoadingSummary &&
+            !isLoadingSettings && // Wait for settings to load
+            isSummaryEnabled // Only process if summary feature is enabled
         ) {
             hasAutoProcessed.current = true
             console.log('🚀 Auto-triggering AI processing with options:', {
@@ -111,7 +129,7 @@ export function AnalysisPage() {
                 }
             })
         }
-    }, [autoProcess, documentId, summary, generateMutation, isLoadingSummary, extractKeywords, generateQuestions])
+    }, [autoProcess, documentId, summary, generateMutation, isLoadingSummary, extractKeywords, generateQuestions, isLoadingSettings, isSummaryEnabled])
 
     // State for chunking information (to show user warnings/info)
     const [chunkingInfo, setChunkingInfo] = useState<{
@@ -384,96 +402,225 @@ export function AnalysisPage() {
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     {/* Left Column - Source Document */}
                     <div className="lg:col-span-1">
-                        <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm overflow-hidden sticky top-24">
-                            <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] bg-[var(--muted)]/30">
+                        <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm overflow-hidden sticky top-24 h-[60vh] flex flex-col">
+                            <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] bg-[var(--muted)]/30 shrink-0">
                                 <div className="flex items-center gap-2">
                                     <span className="material-symbols-outlined text-primary text-lg">description</span>
                                     <span className="text-sm font-bold uppercase tracking-wider">Source Document</span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    <span className="text-xs text-[var(--muted-foreground)]">Highlight</span>
-                                    <label className="toggle-switch" style={{ transform: 'scale(0.8)' }}>
-                                        <input
-                                            type="checkbox"
-                                            checked={highlightKeywords}
-                                            onChange={(e) => setHighlightKeywords(e.target.checked)}
-                                        />
-                                        <span className="toggle-slider" />
-                                    </label>
+                                    {/* Existing Highlight Toggle - only show in text mode */}
+                                    {viewMode === 'text' && (
+                                        <>
+                                            <span className="text-xs text-[var(--muted-foreground)]">Highlight</span>
+                                            <label className="toggle-switch" style={{ transform: 'scale(0.8)' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={highlightKeywords}
+                                                    onChange={(e) => setHighlightKeywords(e.target.checked)}
+                                                />
+                                                <span className="toggle-slider" />
+                                            </label>
+                                        </>
+                                    )}
                                 </div>
                             </div>
 
-                            <div className="p-5 max-h-[60vh] overflow-y-auto hide-scrollbar">
-                                <div className="text-[var(--muted-foreground)] text-sm leading-relaxed whitespace-pre-wrap">
-                                    {renderTextWithKeywords(originalText.substring(0, 2000))}
-                                    {originalText.length > 2000 && (
-                                        <span className="text-primary">... [truncated for display]</span>
-                                    )}
+                            {/* View Mode Tabs (if file exists) */}
+                            {document?.storage_path && (
+                                <div className="flex border-b border-[var(--border)] shrink-0">
+                                    <button
+                                        onClick={() => setViewMode('file')}
+                                        className={`flex-1 py-2 text-xs font-bold uppercase tracking-wider transition-colors ${viewMode === 'file'
+                                            ? 'bg-primary/5 text-primary border-b-2 border-primary'
+                                            : 'text-[var(--muted-foreground)] hover:bg-[var(--muted)]'
+                                            }`}
+                                    >
+                                        Original File
+                                    </button>
+                                    <button
+                                        onClick={() => setViewMode('text')}
+                                        className={`flex-1 py-2 text-xs font-bold uppercase tracking-wider transition-colors ${viewMode === 'text'
+                                            ? 'bg-primary/5 text-primary border-b-2 border-primary'
+                                            : 'text-[var(--muted-foreground)] hover:bg-[var(--muted)]'
+                                            }`}
+                                    >
+                                        Extracted Text
+                                    </button>
                                 </div>
+                            )}
+
+                            <div className="flex-1 overflow-hidden relative">
+                                {viewMode === 'file' && document?.storage_path ? (
+                                    <div className="flex flex-col items-center justify-center h-full p-6 text-center bg-[var(--muted)]/10">
+                                        <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-4 text-primary">
+                                            <span className="material-symbols-outlined text-3xl">description</span>
+                                        </div>
+                                        <h4 className="text-sm font-bold mb-1">
+                                            {document.original_filename || document.title}
+                                        </h4>
+                                        <p className="text-xs text-[var(--muted-foreground)] mb-4">
+                                            View the original document in full screen
+                                        </p>
+                                        <button
+                                            onClick={() => setShowFileViewer(true)}
+                                            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg font-medium hover:bg-primary/90 transition-colors shadow-sm"
+                                        >
+                                            <span className="material-symbols-outlined">fullscreen</span>
+                                            View Document
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="p-5 h-full overflow-y-auto hide-scrollbar">
+                                        <div className="text-[var(--muted-foreground)] text-sm leading-relaxed whitespace-pre-wrap">
+                                            {renderTextWithKeywords(originalText.substring(0, 2000))}
+                                            {originalText.length > 2000 && (
+                                                <span className="text-primary">... [truncated for display]</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
 
+                    {/* Full Screen File Viewer Modal */}
+                    {showFileViewer && document?.storage_path && (
+                        <div className="fixed inset-0 z-50 flex flex-col bg-black/90 backdrop-blur-sm animate-in fade-in duration-200">
+                            {/* Toolbar */}
+                            <div className="flex items-center justify-between px-4 py-3 bg-black/50 text-white border-b border-white/10 shrink-0">
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                    <div className="p-2 bg-white/10 rounded-lg">
+                                        <span className="material-symbols-outlined text-white">description</span>
+                                    </div>
+                                    <div className="overflow-hidden">
+                                        <h3 className="font-medium truncate max-w-md">
+                                            {document.original_filename || document.title}
+                                        </h3>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setShowFileViewer(false)}
+                                    className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                                >
+                                    <span className="material-symbols-outlined">close</span>
+                                </button>
+                            </div>
+
+                            {/* Viewer Content */}
+                            <div className="flex-1 overflow-hidden p-4 md:p-8">
+                                <div className="w-full h-full bg-white rounded-xl shadow-2xl overflow-hidden mx-auto max-w-5xl">
+                                    <FileViewer
+                                        storagePath={document.storage_path}
+                                        filename={document.original_filename || document.title}
+                                        className="w-full h-full"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Right Column - Summary & Analysis */}
                     <div className="lg:col-span-2 space-y-6">
-                        {/* No Summary - Generate Button */}
+                        {/* No Summary - Generate Button or Disabled Message */}
                         {!summary || summary.processing_status === 'pending' || summary.processing_status === 'failed' ? (
                             <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm p-8 text-center">
-                                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                                    <span className="material-symbols-outlined text-3xl text-primary">auto_awesome</span>
-                                </div>
-                                <h3 className="text-xl font-bold mb-2">Generate AI Summary</h3>
-                                <p className="text-[var(--muted-foreground)] mb-6">
-                                    Use AI to analyze this document and generate summaries, keywords, and study questions.
-                                </p>
-                                <button
-                                    onClick={handleGenerateSummary}
-                                    disabled={isProcessing}
-                                    className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-xl font-semibold hover:bg-primary/90 disabled:opacity-50"
-                                >
-                                    {isProcessing ? (
-                                        <>
-                                            <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                            Processing...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <span className="material-symbols-outlined">auto_awesome</span>
-                                            Generate Summary
-                                        </>
-                                    )}
-                                </button>
-                                {(error || summary?.error_message || generateMutation.error) && (
-                                    <div className="mt-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
-                                        <div className="flex items-start gap-3">
-                                            <span className="material-symbols-outlined text-red-500 text-xl mt-0.5">error</span>
-                                            <div className="flex-1">
-                                                <p className="text-red-700 dark:text-red-400 font-medium">
-                                                    {(() => {
-                                                        // Get the error message
-                                                        const rawError = error || summary?.error_message || generateMutation.error?.message || 'Unknown error'
-                                                        console.error('🔴 AI Processing Error:', rawError)
-
-                                                        // Check if it's a technical error that needs translation
-                                                        if (rawError.includes('Edge Function') || rawError.includes('non-2xx')) {
-                                                            return 'Our AI service is temporarily unavailable. Please wait a moment and try again.'
-                                                        }
-                                                        if (rawError.includes('timeout') || rawError.includes('Timeout')) {
-                                                            return 'The request took too long. Please try again with a smaller document.'
-                                                        }
-                                                        if (rawError.includes('network') || rawError.includes('Network')) {
-                                                            return 'Unable to connect to the server. Please check your internet connection.'
-                                                        }
-
-                                                        return rawError
-                                                    })()}
-                                                </p>
-                                                <p className="text-red-600/70 dark:text-red-400/70 text-sm mt-1">
-                                                    Click "Generate Summary" to try again
-                                                </p>
+                                {/* Check if summary feature is disabled by admin */}
+                                {!isSummaryEnabled ? (
+                                    <>
+                                        {/* Summary Feature Disabled Message */}
+                                        <div className="w-20 h-20 bg-amber-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                                            <span className="material-symbols-outlined text-4xl text-amber-500">pause_circle</span>
+                                        </div>
+                                        <h3 className="text-xl font-bold mb-2">AI Summary Temporarily Unavailable</h3>
+                                        <p className="text-[var(--muted-foreground)] mb-4 max-w-md mx-auto">
+                                            The AI summary feature is currently paused to manage system resources.
+                                            Your document has been saved successfully and you can access it anytime from your library.
+                                        </p>
+                                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 max-w-md mx-auto mb-6">
+                                            <div className="flex items-start gap-3 text-left">
+                                                <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-lg mt-0.5">info</span>
+                                                <div>
+                                                    <p className="text-sm text-amber-700 dark:text-amber-300 font-medium">What you can still do:</p>
+                                                    <ul className="text-sm text-amber-600 dark:text-amber-400 mt-1 space-y-1">
+                                                        <li>• View and read your uploaded document</li>
+                                                        <li>• Upload more documents to your library</li>
+                                                        <li>• Access existing summaries from other documents</li>
+                                                    </ul>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
+                                        <p className="text-sm text-[var(--muted-foreground)] mb-4">
+                                            Check back later or contact your administrator for more information.
+                                        </p>
+                                        <button
+                                            onClick={() => navigate('/library')}
+                                            className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-xl font-semibold hover:bg-primary/90"
+                                        >
+                                            <span className="material-symbols-outlined">arrow_back</span>
+                                            Back to Library
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        {/* Normal Generate Summary UI */}
+                                        <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                                            <span className="material-symbols-outlined text-3xl text-primary">auto_awesome</span>
+                                        </div>
+                                        <h3 className="text-xl font-bold mb-2">Generate AI Summary</h3>
+                                        <p className="text-[var(--muted-foreground)] mb-6">
+                                            Use AI to analyze this document and generate summaries, keywords, and study questions.
+                                        </p>
+                                        <button
+                                            onClick={handleGenerateSummary}
+                                            disabled={isProcessing}
+                                            className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-xl font-semibold hover:bg-primary/90 disabled:opacity-50"
+                                        >
+                                            {isProcessing ? (
+                                                <>
+                                                    <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                    Processing...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span className="material-symbols-outlined">auto_awesome</span>
+                                                    Generate Summary
+                                                </>
+                                            )}
+                                        </button>
+                                        {(error || summary?.error_message || generateMutation.error) && (
+                                            <div className="mt-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+                                                <div className="flex items-start gap-3">
+                                                    <span className="material-symbols-outlined text-red-500 text-xl mt-0.5">error</span>
+                                                    <div className="flex-1">
+                                                        <p className="text-red-700 dark:text-red-400 font-medium">
+                                                            {(() => {
+                                                                // Get the error message
+                                                                const rawError = error || summary?.error_message || generateMutation.error?.message || 'Unknown error'
+                                                                console.error('🔴 AI Processing Error:', rawError)
+
+                                                                // Check if it's a technical error that needs translation
+                                                                if (rawError.includes('Edge Function') || rawError.includes('non-2xx')) {
+                                                                    return 'Our AI service is temporarily unavailable. Please wait a moment and try again.'
+                                                                }
+                                                                if (rawError.includes('timeout') || rawError.includes('Timeout')) {
+                                                                    return 'The request took too long. Please try again with a smaller document.'
+                                                                }
+                                                                if (rawError.includes('network') || rawError.includes('Network')) {
+                                                                    return 'Unable to connect to the server. Please check your internet connection.'
+                                                                }
+
+                                                                return rawError
+                                                            })()}
+                                                        </p>
+                                                        <p className="text-red-600/70 dark:text-red-400/70 text-sm mt-1">
+                                                            Click "Generate Summary" to try again
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </div>
                         ) : (

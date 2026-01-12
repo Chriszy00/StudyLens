@@ -7,6 +7,10 @@ import App from './App'
 import { initializeNativeFeatures } from './services/nativeFile'
 initializeNativeFeatures().catch(console.error)
 
+// Import storage test utilities (adds __testStorage and __simpleUpload to window)
+// Only in development - helps debug Supabase Storage issues
+import './services/testStorage'
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 

@@ -1,6 +1,8 @@
 import { HashRouter as Router, Routes, Route, Navigate } from "react-router-dom"
 import { AuthProvider } from "./contexts/AuthContext"
+import { AdminProvider } from "./contexts/AdminContext"
 import { ProtectedRoute } from "./components/ProtectedRoute"
+import { AdminRoute } from "./components/AdminRoute"
 import {
   LoginPage,
   RegisterPage,
@@ -13,6 +15,7 @@ import {
   StatesGalleryPage,
   MethodologyPage,
   StudyPage,
+  AdminPage,
 } from "./pages"
 
 /**
@@ -31,50 +34,57 @@ import {
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <Routes>
-          <Route path="/" element={<Navigate to="/login" replace />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/library" element={
-            <ProtectedRoute>
-              <LibraryPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/upload" element={
-            <ProtectedRoute>
-              <UploadPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/deck" element={
-            <ProtectedRoute>
-              <DeckOverviewPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/flashcards" element={
-            <ProtectedRoute>
-              <FlashcardsPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/analysis" element={
-            <ProtectedRoute>
-              <AnalysisPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/study" element={
-            <ProtectedRoute>
-              <StudyPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/settings" element={
-            <ProtectedRoute>
-              <SettingsPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/states" element={<StatesGalleryPage />} />
-          <Route path="/methodology" element={<MethodologyPage />} />
-        </Routes>
-      </Router>
+      <AdminProvider>
+        <Router>
+          <Routes>
+            <Route path="/" element={<Navigate to="/login" replace />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/library" element={
+              <ProtectedRoute>
+                <LibraryPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/upload" element={
+              <ProtectedRoute>
+                <UploadPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/deck" element={
+              <ProtectedRoute>
+                <DeckOverviewPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/flashcards" element={
+              <ProtectedRoute>
+                <FlashcardsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/analysis" element={
+              <ProtectedRoute>
+                <AnalysisPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/study" element={
+              <ProtectedRoute>
+                <StudyPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/settings" element={
+              <ProtectedRoute>
+                <SettingsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/admin" element={
+              <AdminRoute>
+                <AdminPage />
+              </AdminRoute>
+            } />
+            <Route path="/states" element={<StatesGalleryPage />} />
+            <Route path="/methodology" element={<MethodologyPage />} />
+          </Routes>
+        </Router>
+      </AdminProvider>
     </AuthProvider>
   )
 }

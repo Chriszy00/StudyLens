@@ -2,10 +2,12 @@ import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { Header, PageWrapper } from "@/components/layout"
 import { useAuth } from "@/contexts/AuthContext"
+import { useAdmin } from "@/contexts/AdminContext"
 
 export function SettingsPage() {
     const navigate = useNavigate()
     const { user, signOut } = useAuth()
+    const { isAdmin } = useAdmin()
 
     // Initialize form with user data when available
     const [fullName, setFullName] = useState("")
@@ -183,6 +185,32 @@ export function SettingsPage() {
                                 </div>
                             </div>
                         </div>
+
+                        {/* Admin Panel Link - Only visible to admins */}
+                        {isAdmin && (
+                            <div className="bg-gradient-to-br from-amber-500/10 via-orange-500/10 to-red-500/10 rounded-xl p-6 border border-amber-500/20 shadow-sm">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-500/20">
+                                            <span className="material-symbols-outlined text-white text-xl">admin_panel_settings</span>
+                                        </div>
+                                        <div>
+                                            <h3 className="text-lg font-bold leading-tight tracking-tight">Admin Dashboard</h3>
+                                            <p className="text-[var(--muted-foreground)] text-sm">
+                                                Manage app settings and features
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => navigate("/admin")}
+                                        className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-lg font-semibold text-sm hover:from-amber-600 hover:to-orange-700 transition-all shadow-md"
+                                    >
+                                        <span>Open Dashboard</span>
+                                        <span className="material-symbols-outlined text-lg">arrow_forward</span>
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Security */}
                         <div className="bg-[var(--card)] rounded-xl p-6 border border-[var(--border)] shadow-sm">
