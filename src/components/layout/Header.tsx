@@ -1,7 +1,8 @@
 import { cn } from "@/lib/utils"
+import type { ReactNode } from "react"
 
 interface HeaderProps {
-    title: string
+    title: ReactNode
     showBack?: boolean
     onBack?: () => void
     rightAction?: React.ReactNode
@@ -24,9 +25,15 @@ export function Header({ title, showBack = false, onBack, rightAction, className
                             <span className="material-symbols-outlined">arrow_back_ios</span>
                         </button>
                     )}
-                    <h2 className="text-xl font-bold leading-tight tracking-tight">
-                        {title}
-                    </h2>
+                    {typeof title === 'string' ? (
+                        <h2 className="text-xl font-bold leading-tight tracking-tight">
+                            {title}
+                        </h2>
+                    ) : (
+                        <div className="flex items-center">
+                            {title}
+                        </div>
+                    )}
                 </div>
                 <div className="flex items-center gap-4">
                     {rightAction}

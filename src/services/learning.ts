@@ -38,12 +38,84 @@ export interface ConceptMastery {
 }
 
 /**
- * Generate flashcards from a document's study questions
+ * CACHED USER SESSION
+ * -------------------
+ * Instead of calling supabase.auth.getSession() on every function (which is a network call!),
+ * we cache the user info and refresh it only when needed.
+ * 
+ * WHY THIS MATTERS:
+ * - getSession() can take 100-500ms each call
+ * - Multiple simultaneous calls can cause race conditions
+ * - If token is refreshing, getSession() can hang
+ * 
+ * With caching:
+ * - First call gets the session
+ * - Subsequent calls within 30 seconds use cached value
+ * - Auth state changes (via onAuthStateChange) invalidate the cache
  */
-export async function generateFlashcardsFromDocument(documentId: string): Promise<Flashcard[]> {
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    if (!user) throw new Error('Not authenticated')
+let cachedUserId: string | null = null
+let cacheTimestamp: number = 0
+const CACHE_DURATION_MS = 30000 // 30 seconds
+
+// Listen for auth changes to invalidate cache
+supabase.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+        cachedUserId = null
+        cacheTimestamp = 0
+    }
+})
+
+/**
+ * Get the current user ID with caching
+ * This is MUCH faster than calling getSession() every time
+ */
+async function getCurrentUserId(): Promise<string> {
+    const now = Date.now()
+
+    // 🔍 DIAGNOSTIC LOGGING - Remove after debugging
+    console.log('🔐 [getCurrentUserId/learning] Called. Cache valid:', !!(cachedUserId && (now - cacheTimestamp) < CACHE_DURATION_MS))
+
+    // Use cached value if still valid
+    if (cachedUserId && (now - cacheTimestamp) < CACHE_DURATION_MS) {
+        console.log('🔐 [getCurrentUserId/learning] Using cached userId:', cachedUserId.substring(0, 8) + '...')
+        return cachedUserId
+    }
+
+    console.log('🔐 [getCurrentUserId/learning] Cache miss, calling getSession()...')
+    const startTime = Date.now()
+
+    // Get fresh session
+    const { data: { session }, error } = await supabase.auth.getSession()
+
+    console.log('🔐 [getCurrentUserId/learning] getSession() completed in', Date.now() - startTime, 'ms')
+
+    if (error) {
+        console.error('🔐 [getCurrentUserId/learning] Auth error:', error)
+        throw new Error('Authentication error')
+    }
+
+    if (!session?.user) {
+        console.error('🔐 [getCurrentUserId/learning] No session/user found')
+        throw new Error('Not authenticated')
+    }
+
+    // Cache the result
+    cachedUserId = session.user.id
+    cacheTimestamp = now
+
+    console.log('🔐 [getCurrentUserId/learning] Cached new userId:', cachedUserId.substring(0, 8) + '...')
+
+    return cachedUserId
+}
+
+/**
+ * Generate flashcards from a document's study questions
+ * @param documentId - The document UUID
+ * @param userId - Optional user ID (pass from AuthContext to avoid getSession() hangs)
+ */
+export async function generateFlashcardsFromDocument(documentId: string, userId?: string): Promise<Flashcard[]> {
+    console.log('🃏 [generateFlashcards] Called with documentId:', documentId, 'userId provided:', !!userId)
+    const effectiveUserId = userId || await getCurrentUserId()
 
     // Get the summary with study questions
     const { data: summary, error: summaryError } = await supabase
@@ -71,7 +143,7 @@ export async function generateFlashcardsFromDocument(documentId: string): Promis
         .from('flashcards')
         .select('id')
         .eq('document_id', documentId)
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
 
     if (existingCards && existingCards.length > 0) {
         // Return existing flashcards
@@ -79,13 +151,13 @@ export async function generateFlashcardsFromDocument(documentId: string): Promis
             .from('flashcards')
             .select('*')
             .eq('document_id', documentId)
-            .eq('user_id', user.id)
+            .eq('user_id', effectiveUserId)
         return cards as Flashcard[]
     }
 
     // Create flashcards from study questions
     const flashcardsToInsert = studyQuestions.map(q => ({
-        user_id: user.id,
+        user_id: effectiveUserId,
         document_id: documentId,
         front: q.question,
         back: q.answer,
@@ -98,6 +170,7 @@ export async function generateFlashcardsFromDocument(documentId: string): Promis
         .select()
 
     if (insertError) throw insertError
+    console.log('🃏 [generateFlashcards] Created', newCards?.length || 0, 'new flashcards')
     return newCards as Flashcard[]
 }
 
@@ -105,14 +178,12 @@ export async function generateFlashcardsFromDocument(documentId: string): Promis
  * Get flashcards due for review
  */
 export async function getDueFlashcards(documentId?: string): Promise<Flashcard[]> {
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    if (!user) throw new Error('Not authenticated')
+    const userId = await getCurrentUserId()
 
     let query = supabase
         .from('flashcards')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .lte('next_review_date', new Date().toISOString())
         .order('next_review_date', { ascending: true })
 
@@ -127,20 +198,32 @@ export async function getDueFlashcards(documentId?: string): Promise<Flashcard[]
 
 /**
  * Get all flashcards for a document
+ * @param documentId - The document UUID
+ * @param userId - The user's ID (pass from AuthContext to avoid getSession() hangs)
  */
-export async function getFlashcards(documentId: string): Promise<Flashcard[]> {
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    if (!user) throw new Error('Not authenticated')
+export async function getFlashcards(documentId: string, userId?: string): Promise<Flashcard[]> {
+    console.log('🃏 [getFlashcards] Called with documentId:', documentId, 'userId provided:', !!userId)
+    const startTime = Date.now()
+
+    // Use provided userId or fall back to getCurrentUserId (which may hang!)
+    const effectiveUserId = userId || await getCurrentUserId()
+    console.log('🃏 [getFlashcards] Got userId, now querying Supabase...')
 
     const { data, error } = await supabase
         .from('flashcards')
         .select('*')
         .eq('document_id', documentId)
-        .eq('user_id', user.id)
+        .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: true })
 
-    if (error) throw error
+    console.log('🃏 [getFlashcards] Supabase query completed in', Date.now() - startTime, 'ms')
+
+    if (error) {
+        console.error('🃏 [getFlashcards] Error:', error)
+        throw error
+    }
+
+    console.log('🃏 [getFlashcards] Returning', data?.length || 0, 'flashcards')
     return data as Flashcard[]
 }
 
@@ -190,16 +273,20 @@ export function calculateSM2(
 
 /**
  * Record a card review and update spaced repetition values
+ * @param flashcardId - The flashcard UUID
+ * @param quality - Rating 0-5
+ * @param sessionId - Optional session ID
+ * @param timeSpentMs - Optional time spent in ms
+ * @param userId - Optional user ID (pass from AuthContext to avoid getSession() hangs)
  */
 export async function recordCardReview(
     flashcardId: string,
-    quality: number, // 0-5 rating
+    quality: number,
     sessionId?: string,
-    timeSpentMs?: number
+    timeSpentMs?: number,
+    userId?: string
 ): Promise<Flashcard> {
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    if (!user) throw new Error('Not authenticated')
+    const effectiveUserId = userId || await getCurrentUserId()
 
     // Get current flashcard state
     const { data: card, error: fetchError } = await supabase
@@ -242,7 +329,7 @@ export async function recordCardReview(
     await supabase.from('card_reviews').insert({
         flashcard_id: flashcardId,
         session_id: sessionId,
-        user_id: user.id,
+        user_id: effectiveUserId,
         quality,
         time_spent_ms: timeSpentMs,
     })
@@ -252,19 +339,21 @@ export async function recordCardReview(
 
 /**
  * Start a new study session
+ * @param documentId - Optional document UUID
+ * @param sessionType - Type of session
+ * @param userId - Optional user ID (pass from AuthContext to avoid getSession() hangs)
  */
 export async function startStudySession(
     documentId?: string,
-    sessionType: 'review' | 'learn' | 'quiz' = 'review'
+    sessionType: 'review' | 'learn' | 'quiz' = 'review',
+    userId?: string
 ): Promise<StudySession> {
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    if (!user) throw new Error('Not authenticated')
+    const effectiveUserId = userId || await getCurrentUserId()
 
     const { data, error } = await supabase
         .from('study_sessions')
         .insert({
-            user_id: user.id,
+            user_id: effectiveUserId,
             document_id: documentId,
             session_type: sessionType,
         })
@@ -302,14 +391,12 @@ export async function getStudyStats(): Promise<{
     averageAccuracy: number
     streakDays: number
 }> {
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    if (!user) throw new Error('Not authenticated')
+    const userId = await getCurrentUserId()
 
     const { data: sessions } = await supabase
         .from('study_sessions')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .not('ended_at', 'is', null)
 
     if (!sessions || sessions.length === 0) {
@@ -401,15 +488,13 @@ export async function updateConceptMastery(
     keyword: string,
     wasCorrect: boolean
 ): Promise<ConceptMastery> {
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    if (!user) throw new Error('Not authenticated')
+    const userId = await getCurrentUserId()
 
     // Get or create mastery record
     const { data: existing } = await supabase
         .from('concept_mastery')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .eq('document_id', documentId)
         .eq('keyword', keyword)
         .single()
@@ -442,7 +527,7 @@ export async function updateConceptMastery(
         const { data, error } = await supabase
             .from('concept_mastery')
             .insert({
-                user_id: user.id,
+                user_id: userId,
                 document_id: documentId,
                 keyword,
                 times_reviewed: timesReviewed,
@@ -462,14 +547,12 @@ export async function updateConceptMastery(
  * Get mastery scores for all concepts in a document
  */
 export async function getDocumentMastery(documentId: string): Promise<ConceptMastery[]> {
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    if (!user) throw new Error('Not authenticated')
+    const userId = await getCurrentUserId()
 
     const { data, error } = await supabase
         .from('concept_mastery')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .eq('document_id', documentId)
         .order('mastery_score', { ascending: false })
 
@@ -487,14 +570,12 @@ export async function getOverallMastery(): Promise<{
     needsWorkConcepts: number // WMS < 40
     averageMastery: number
 }> {
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    if (!user) throw new Error('Not authenticated')
+    const userId = await getCurrentUserId()
 
     const { data } = await supabase
         .from('concept_mastery')
         .select('mastery_score')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
 
     if (!data || data.length === 0) {
         return {

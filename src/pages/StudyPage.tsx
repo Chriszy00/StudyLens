@@ -1,14 +1,31 @@
 import { useState, useEffect } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { useQuery } from '@tanstack/react-query'
 import { Header, PageWrapper } from "@/components/layout"
 import {
-    generateFlashcardsFromDocument,
-    getFlashcards,
-    recordCardReview,
-    startStudySession,
-    endStudySession
-} from "@/services/learning"
+    useFlashcards,
+    useGenerateFlashcards,
+    useRecordReview,
+    useStartSession,
+    useEndSession,
+} from "@/hooks"
+
+/**
+ * StudyPage - Flashcard Study Mode
+ * 
+ * ARCHITECTURE NOTES (for learning):
+ * ----------------------------------
+ * This component demonstrates the CORRECT way to handle data that might
+ * not exist yet. We use:
+ * 
+ * 1. useFlashcards (QUERY) - Only READS existing flashcards
+ * 2. useGenerateFlashcards (MUTATION) - Only CREATES new flashcards
+ * 
+ * The useEffect at the bottom checks if cards need to be generated
+ * and triggers the mutation. This is much safer than generating inside
+ * the query, because:
+ * - Queries can refetch anytime (window focus, error retry, etc.)
+ * - Mutations only run when WE explicitly call them
+ */
 
 export function StudyPage() {
     const navigate = useNavigate()
@@ -21,33 +38,73 @@ export function StudyPage() {
     const [results, setResults] = useState<{ correct: number; incorrect: number }>({ correct: 0, incorrect: 0 })
     const [isComplete, setIsComplete] = useState(false)
     const [startTime, setStartTime] = useState<number>(Date.now())
+    const [hasAttemptedGeneration, setHasAttemptedGeneration] = useState(false)
 
-    const { data: flashcards = [], isLoading: loading, error } = useQuery({
-        queryKey: ['flashcards', documentId],
-        queryFn: async () => {
-            if (!documentId) throw new Error("No document ID provided")
-            // Try to get existing flashcards
-            let cards = await getFlashcards(documentId)
+    // STEP 1: Fetch existing flashcards (READ-ONLY)
+    const {
+        data: flashcards = [],
+        isLoading: isLoadingCards,
+        error: cardsError,
+        fetchStatus: cardsFetchStatus,
+        status: cardsStatus,
+    } = useFlashcards(documentId)
 
-            // If no cards exist, generate them
-            if (cards.length === 0) {
-                cards = await generateFlashcardsFromDocument(documentId)
-            }
-            return cards
-        },
-        enabled: !!documentId,
-        refetchOnWindowFocus: false, // Don't refetch while studying
-        staleTime: Infinity, // Keep cards fresh for the session
+    // STEP 2: Mutation for generating flashcards (WRITE)
+    const generateMutation = useGenerateFlashcards()
+
+    // STEP 3: Mutation for recording reviews
+    const reviewMutation = useRecordReview()
+
+    // STEP 4: Session management
+    const startSessionMutation = useStartSession()
+    const endSessionMutation = useEndSession()
+
+    // 🔍 DIAGNOSTIC LOGGING - Remove after debugging
+    console.log('🃏 [StudyPage] ===== RENDER =====')
+    console.log('🃏 [StudyPage] documentId from URL:', documentId, '| Type:', typeof documentId)
+    console.log('🃏 [StudyPage] Query enabled condition (!!documentId):', !!documentId)
+    console.log('🃏 [StudyPage] Flashcards Query State:', {
+        isLoading: isLoadingCards,
+        error: cardsError?.message || null,
+        fetchStatus: cardsFetchStatus,
+        status: cardsStatus,
+        flashcardsCount: flashcards.length,
     })
+    console.log('🃏 [StudyPage] Generate Mutation State:', {
+        isPending: generateMutation.isPending,
+        isSuccess: generateMutation.isSuccess,
+        isError: generateMutation.isError,
+        error: generateMutation.error?.message || null,
+    })
+    console.log('🃏 [StudyPage] hasAttemptedGeneration:', hasAttemptedGeneration)
+    console.log('🃏 [StudyPage] Combined loading state:', isLoadingCards || generateMutation.isPending)
+
+    // STEP 5: Generate cards if they don't exist
+    // This useEffect is the KEY to solving the query/mutation problem
+    useEffect(() => {
+        if (
+            documentId &&
+            flashcards.length === 0 &&
+            !isLoadingCards &&
+            !generateMutation.isPending &&
+            !generateMutation.isSuccess &&
+            !hasAttemptedGeneration &&
+            !cardsError
+        ) {
+            setHasAttemptedGeneration(true)
+            generateMutation.mutate(documentId)
+        }
+    }, [documentId, flashcards, isLoadingCards, generateMutation, hasAttemptedGeneration, cardsError])
 
     // Start session when cards are loaded
     useEffect(() => {
-        if (flashcards.length > 0 && !sessionId && documentId) {
-            startStudySession(documentId, 'learn')
-                .then(s => setSessionId(s.id))
-                .catch(console.error)
+        if (flashcards.length > 0 && !sessionId && documentId && !startSessionMutation.isPending) {
+            startSessionMutation.mutate(
+                { documentId, sessionType: 'learn' },
+                { onSuccess: (session) => setSessionId(session.id) }
+            )
         }
-    }, [flashcards, sessionId, documentId])
+    }, [flashcards, sessionId, documentId, startSessionMutation])
 
     async function handleRating(quality: number) {
         if (!flashcards[currentIndex]) return
@@ -56,8 +113,13 @@ export function StudyPage() {
         const card = flashcards[currentIndex]
 
         try {
-            // Record the review
-            await recordCardReview(card.id, quality, sessionId || undefined, timeSpent)
+            // Record the review using mutation
+            await reviewMutation.mutateAsync({
+                cardId: card.id,
+                quality,
+                sessionId: sessionId || undefined,
+                timeMs: timeSpent,
+            })
 
             // Update results
             if (quality >= 3) {
@@ -74,11 +136,11 @@ export function StudyPage() {
             } else {
                 // Session complete
                 if (sessionId) {
-                    await endStudySession(
+                    endSessionMutation.mutate({
                         sessionId,
-                        flashcards.length,
-                        results.correct + (quality >= 3 ? 1 : 0)
-                    )
+                        cardsStudied: flashcards.length,
+                        correctCount: results.correct + (quality >= 3 ? 1 : 0),
+                    })
                 }
                 setIsComplete(true)
             }
@@ -90,6 +152,12 @@ export function StudyPage() {
     const currentCard = flashcards[currentIndex]
     const progress = flashcards.length > 0 ? ((currentIndex + 1) / flashcards.length) * 100 : 0
 
+    // Loading state - either fetching cards or generating them
+    const loading = isLoadingCards || generateMutation.isPending
+
+    // Error state
+    const error = cardsError || generateMutation.error
+
     if (loading) {
         return (
             <PageWrapper>
@@ -97,7 +165,11 @@ export function StudyPage() {
                 <div className="flex items-center justify-center py-20">
                     <div className="flex flex-col items-center gap-4">
                         <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-                        <p className="text-[var(--muted-foreground)]">Loading flashcards...</p>
+                        <p className="text-[var(--muted-foreground)]">
+                            {generateMutation.isPending
+                                ? "Generating flashcards..."
+                                : "Loading flashcards..."}
+                        </p>
                     </div>
                 </div>
             </PageWrapper>
@@ -105,18 +177,71 @@ export function StudyPage() {
     }
 
     if (error) {
+        // Check if error is specifically about no summary
+        const isMissingSummary = error instanceof Error &&
+            (error.message.includes('No summary found') ||
+                error.message.includes('No study questions'))
+
         return (
             <PageWrapper>
                 <Header title="Study Mode" showBack onBack={() => navigate(-1)} />
-                <div className="flex flex-col items-center justify-center py-20 gap-4">
-                    <span className="material-symbols-outlined text-4xl text-red-500">error</span>
-                    <p className="text-red-500 text-center">{error.message}</p>
-                    <button
-                        onClick={() => navigate(-1)}
-                        className="px-4 py-2 bg-primary text-white rounded-lg font-semibold text-sm"
-                    >
-                        Go Back
-                    </button>
+                <div className="flex flex-col items-center justify-center py-20 gap-6 max-w-md mx-auto text-center">
+                    {isMissingSummary ? (
+                        <>
+                            {/* Friendly illustration */}
+                            <div className="w-24 h-24 bg-amber-100 dark:bg-amber-900/20 rounded-full flex items-center justify-center">
+                                <span className="material-symbols-outlined text-amber-600 text-5xl">
+                                    auto_stories
+                                </span>
+                            </div>
+
+                            <div className="space-y-2">
+                                <h2 className="text-xl font-bold">Generate a Summary First</h2>
+                                <p className="text-[var(--muted-foreground)]">
+                                    This document hasn't been analyzed yet. Generate an AI summary to create flashcards for studying.
+                                </p>
+                            </div>
+
+                            {/* Action buttons */}
+                            <div className="flex flex-col gap-3 w-full max-w-xs">
+                                <button
+                                    onClick={() => navigate(`/analysis?id=${documentId}`)}
+                                    className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white rounded-xl font-semibold hover:bg-primary/90 transition-colors"
+                                >
+                                    <span className="material-symbols-outlined">auto_awesome</span>
+                                    Generate Summary
+                                </button>
+                                <button
+                                    onClick={() => navigate(-1)}
+                                    className="w-full px-6 py-3 border border-[var(--border)] rounded-xl font-semibold hover:bg-[var(--muted)] transition-colors"
+                                >
+                                    Go Back
+                                </button>
+                            </div>
+
+                            {/* Info box */}
+                            <div className="flex items-start gap-3 p-4 bg-primary/5 rounded-xl border border-primary/20 text-left">
+                                <span className="material-symbols-outlined text-primary text-lg shrink-0 mt-0.5">info</span>
+                                <p className="text-sm text-[var(--muted-foreground)]">
+                                    <strong className="text-[var(--foreground)]">Tip:</strong> After generating a summary, the AI will create study questions that become your flashcards.
+                                </p>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            {/* Generic error state */}
+                            <span className="material-symbols-outlined text-4xl text-red-500">error</span>
+                            <p className="text-red-500">
+                                {error instanceof Error ? error.message : "Failed to load flashcards"}
+                            </p>
+                            <button
+                                onClick={() => navigate(-1)}
+                                className="px-4 py-2 bg-primary text-white rounded-lg font-semibold text-sm"
+                            >
+                                Go Back
+                            </button>
+                        </>
+                    )}
                 </div>
             </PageWrapper>
         )
@@ -253,28 +378,32 @@ export function StudyPage() {
                         <div className="grid grid-cols-4 gap-3">
                             <button
                                 onClick={() => handleRating(1)}
-                                className="py-4 px-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1"
+                                disabled={reviewMutation.isPending}
+                                className="py-4 px-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1 disabled:opacity-50"
                             >
                                 <span className="material-symbols-outlined">sentiment_very_dissatisfied</span>
                                 <span className="text-xs">Again</span>
                             </button>
                             <button
                                 onClick={() => handleRating(2)}
-                                className="py-4 px-2 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1"
+                                disabled={reviewMutation.isPending}
+                                className="py-4 px-2 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1 disabled:opacity-50"
                             >
                                 <span className="material-symbols-outlined">sentiment_dissatisfied</span>
                                 <span className="text-xs">Hard</span>
                             </button>
                             <button
                                 onClick={() => handleRating(4)}
-                                className="py-4 px-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1"
+                                disabled={reviewMutation.isPending}
+                                className="py-4 px-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1 disabled:opacity-50"
                             >
                                 <span className="material-symbols-outlined">sentiment_satisfied</span>
                                 <span className="text-xs">Good</span>
                             </button>
                             <button
                                 onClick={() => handleRating(5)}
-                                className="py-4 px-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1"
+                                disabled={reviewMutation.isPending}
+                                className="py-4 px-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1 disabled:opacity-50"
                             >
                                 <span className="material-symbols-outlined">sentiment_very_satisfied</span>
                                 <span className="text-xs">Easy</span>
@@ -298,3 +427,4 @@ export function StudyPage() {
         </PageWrapper>
     )
 }
+

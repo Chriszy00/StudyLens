@@ -13,6 +13,52 @@ export interface DocumentWithMeta extends Document {
 }
 
 /**
+ * CACHED USER SESSION
+ * Same pattern as learning.ts - cache auth to avoid repeated network calls
+ */
+let cachedUserId: string | null = null
+let cacheTimestamp: number = 0
+const CACHE_DURATION_MS = 30000 // 30 seconds
+
+// Listen for auth changes to invalidate cache
+supabase.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+        cachedUserId = null
+        cacheTimestamp = 0
+    }
+})
+
+/**
+ * Get the current user ID with caching
+ */
+async function getCurrentUserId(): Promise<string> {
+    const now = Date.now()
+
+    // Use cached value if still valid
+    if (cachedUserId && (now - cacheTimestamp) < CACHE_DURATION_MS) {
+        return cachedUserId
+    }
+
+    // Get fresh session
+    const { data: { session }, error } = await supabase.auth.getSession()
+
+    if (error) {
+        console.error('Auth error:', error)
+        throw new Error('Authentication error')
+    }
+
+    if (!session?.user) {
+        throw new Error('Not authenticated')
+    }
+
+    // Cache the result
+    cachedUserId = session.user.id
+    cacheTimestamp = now
+
+    return cachedUserId
+}
+
+/**
  * Get all documents for the current user with optional filtering
  */
 export async function getDocuments(filter: DocumentFilter = 'all'): Promise<DocumentWithMeta[]> {
@@ -68,17 +114,23 @@ export async function getDocuments(filter: DocumentFilter = 'all'): Promise<Docu
  * Get a single document by ID
  */
 export async function getDocument(id: string): Promise<Document | null> {
+    console.log('📄 [getDocument] Called with id:', id)
+    const startTime = Date.now()
+
     const { data, error } = await supabase
         .from('documents')
         .select('*')
         .eq('id', id)
         .single()
 
+    console.log('📄 [getDocument] Supabase query completed in', Date.now() - startTime, 'ms')
+
     if (error) {
-        console.error('Error fetching document:', error)
+        console.error('📄 [getDocument] Error:', error)
         return null
     }
 
+    console.log('📄 [getDocument] Returning document:', data?.title)
     return data
 }
 
@@ -86,18 +138,13 @@ export async function getDocument(id: string): Promise<Document | null> {
  * Create a new document
  */
 export async function createDocument(document: Omit<DocumentInsert, 'user_id'>): Promise<Document> {
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-
-    if (!user) {
-        throw new Error('User not authenticated')
-    }
+    const userId = await getCurrentUserId()
 
     const { data, error } = await supabase
         .from('documents')
         .insert({
             ...document,
-            user_id: user.id,
+            user_id: userId,
         })
         .select()
         .single()

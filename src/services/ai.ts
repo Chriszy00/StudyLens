@@ -30,6 +30,19 @@ export interface AIProcessingOptions {
 }
 
 /**
+ * Response from the process-document edge function
+ */
+export interface ProcessDocumentResponse {
+    summaryId: string
+    status: 'completed' | 'failed'
+    chunksProcessed?: number
+    wasChunked?: boolean
+    wasTruncated?: boolean
+    originalLength?: number
+}
+
+
+/**
  * Trigger AI processing for a document
  * This calls the Supabase Edge Function
  */
@@ -41,14 +54,46 @@ export async function processDocument(
         extractKeywords: true,
         generateQuestions: true,
     }
-): Promise<{ summaryId: string }> {
+): Promise<ProcessDocumentResponse> {
     const { data, error } = await supabase.functions.invoke('process-document', {
         body: { documentId, options },
     })
 
     if (error) {
-        console.error('Error processing document:', error)
-        throw error
+        console.error('Edge Function error:', error)
+
+        // Try to extract user-friendly error message from the response
+        // The Edge Function returns { error: "user message", errorCode: "...", technicalDetails: "..." }
+        let userMessage = 'Our AI service is temporarily unavailable. Please wait a moment and try again.'
+
+        // Check if error.message contains JSON (the edge function response)
+        if (error.message) {
+            try {
+                // Sometimes the error contains the response body
+                if (error.context?.body) {
+                    const errorBody = JSON.parse(error.context.body)
+                    if (errorBody.error) {
+                        userMessage = errorBody.error
+                    }
+                }
+            } catch {
+                // If parsing fails, check if the data contains the error
+                if (data?.error) {
+                    userMessage = data.error
+                }
+            }
+        }
+
+        // Log the technical details for debugging
+        console.error('Technical details:', data?.technicalDetails || error.message)
+
+        throw new Error(userMessage)
+    }
+
+    // Check if the response itself contains an error (edge function returned 200 but with error)
+    if (data?.error) {
+        console.error('Processing error:', data.error)
+        throw new Error(data.error)
     }
 
     return data
@@ -58,21 +103,27 @@ export async function processDocument(
  * Get the summary for a document
  */
 export async function getSummary(documentId: string): Promise<Summary | null> {
+    console.log('📝 [getSummary] Called with documentId:', documentId)
+    const startTime = Date.now()
+
     const { data, error } = await supabase
         .from('summaries')
         .select('*')
         .eq('document_id', documentId)
         .single()
 
+    console.log('📝 [getSummary] Supabase query completed in', Date.now() - startTime, 'ms')
+
     if (error) {
         if (error.code === 'PGRST116') {
-            // No summary found
+            console.log('📝 [getSummary] No summary found (PGRST116)')
             return null
         }
-        console.error('Error fetching summary:', error)
+        console.error('📝 [getSummary] Error:', error)
         throw error
     }
 
+    console.log('📝 [getSummary] Returning summary with status:', data?.processing_status)
     return data as Summary
 }
 

@@ -1,13 +1,44 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { Header, PageWrapper } from "@/components/layout"
+import { useAuth } from "@/contexts/AuthContext"
 
 export function SettingsPage() {
     const navigate = useNavigate()
-    const [fullName, setFullName] = useState("Alex Johnson")
-    const [email, setEmail] = useState("alex.j@university.edu")
+    const { user, signOut } = useAuth()
+
+    // Initialize form with user data when available
+    const [fullName, setFullName] = useState("")
+    const [email, setEmail] = useState("")
     const [summaryLength, setSummaryLength] = useState<"Med" | "Long">("Med")
     const [autoSave, setAutoSave] = useState(true)
+
+    // Sync user data to form when user loads
+    useEffect(() => {
+        if (user) {
+            // Get full name from user metadata or email prefix
+            const displayName = user.user_metadata?.full_name ||
+                user.email?.split('@')[0] ||
+                "User"
+            setFullName(displayName)
+            setEmail(user.email || "")
+        }
+    }, [user])
+
+    // Generate avatar URL - use Gravatar as fallback or user's avatar from metadata
+    const getAvatarUrl = () => {
+        if (user?.user_metadata?.avatar_url) {
+            return user.user_metadata.avatar_url
+        }
+        // Generate a UI Avatars fallback based on user's name
+        const name = encodeURIComponent(fullName || "User")
+        return `https://ui-avatars.com/api/?name=${name}&background=3b82f6&color=ffffff&size=200`
+    }
+
+    const handleSignOut = async () => {
+        await signOut()
+        navigate("/login")
+    }
 
     return (
         <PageWrapper>
@@ -22,15 +53,15 @@ export function SettingsPage() {
                                 <div
                                     className="bg-center bg-no-repeat aspect-square bg-cover rounded-full w-28 h-28 border-4 border-[var(--background)] shadow-lg"
                                     style={{
-                                        backgroundImage: `url("https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop&crop=face")`,
+                                        backgroundImage: `url("${getAvatarUrl()}")`,
                                     }}
                                 />
                                 <div className="flex flex-col items-center justify-center">
                                     <p className="text-xl font-bold leading-tight tracking-tight text-center">
-                                        Alex Johnson
+                                        {fullName || "Loading..."}
                                     </p>
                                     <p className="text-[var(--muted-foreground)] text-sm font-normal leading-normal text-center">
-                                        alex.j@university.edu
+                                        {email || "Loading..."}
                                     </p>
                                     <button className="text-primary text-sm font-semibold leading-normal text-center mt-2 hover:underline cursor-pointer">
                                         Edit Photo
@@ -49,6 +80,12 @@ export function SettingsPage() {
                                 className="w-full py-3 px-8 rounded-xl border border-[var(--border)] font-semibold text-sm hover:bg-[var(--muted)] transition-colors"
                             >
                                 Cancel
+                            </button>
+                            <button
+                                onClick={handleSignOut}
+                                className="w-full py-3 px-8 rounded-xl border border-red-500/30 text-red-500 font-semibold text-sm hover:bg-red-500/10 transition-colors"
+                            >
+                                Sign Out
                             </button>
                         </div>
                     </div>
@@ -77,14 +114,18 @@ export function SettingsPage() {
                                 <div className="flex flex-col">
                                     <label className="flex flex-col">
                                         <p className="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider pb-2">
-                                            University Email
+                                            Email Address
                                         </p>
                                         <input
-                                            className="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg p-3 focus:ring-2 focus:ring-primary/50 focus:border-primary text-base"
+                                            className="w-full bg-[var(--background)] border border-[var(--border)] rounded-lg p-3 focus:ring-2 focus:ring-primary/50 focus:border-primary text-base opacity-60"
                                             placeholder="Email address"
                                             value={email}
-                                            onChange={(e) => setEmail(e.target.value)}
+                                            disabled
+                                            title="Email cannot be changed"
                                         />
+                                        <p className="text-xs text-[var(--muted-foreground)] mt-1">
+                                            Email cannot be changed
+                                        </p>
                                     </label>
                                 </div>
                             </div>
@@ -220,3 +261,4 @@ export function SettingsPage() {
         </PageWrapper>
     )
 }
+

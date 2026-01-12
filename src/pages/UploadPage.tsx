@@ -3,11 +3,13 @@ import { useNavigate } from "react-router-dom"
 import { Header, PageWrapper } from "@/components/layout"
 import { uploadFile, extractTextFromFile, validateFile } from "@/services/storage"
 import { createDocument, estimateReadTime } from "@/services/documents"
+import { useAuth } from "@/contexts/AuthContext"
 
 type SummaryType = "short" | "detailed" | "study_notes"
 
 export function UploadPage() {
     const navigate = useNavigate()
+    const { user } = useAuth()
     const fileInputRef = useRef<HTMLInputElement>(null)
 
     // Form state
@@ -70,11 +72,16 @@ export function UploadPage() {
             let originalFilename: string | undefined
 
             if (selectedFile) {
-                // Upload file
+                // Upload file - now shows better progress since file is read into memory first
                 console.log('📤 Uploading file:', selectedFile.name)
-                setUploadProgress("Uploading file...")
+                setUploadProgress("Reading file into memory...")
+                
+                // Short delay to show the reading message (the actual read happens in uploadFile)
+                await new Promise(resolve => setTimeout(resolve, 100))
+                setUploadProgress("Uploading to cloud storage...")
+                
                 const uploadStart = Date.now()
-                const uploadResult = await uploadFile(selectedFile)
+                const uploadResult = await uploadFile(selectedFile, user?.id)
                 console.log(`✅ File uploaded in ${Date.now() - uploadStart}ms`)
                 storagePath = uploadResult.path
                 originalFilename = selectedFile.name
@@ -107,8 +114,16 @@ export function UploadPage() {
 
             console.log(`🎉 Total time: ${Date.now() - startTime}ms`)
 
-            // Navigate to analysis page with the new document ID
-            navigate(`/analysis?id=${document.id}`)
+            // Navigate to analysis page with document ID and processing options
+            // The options tell the AI what to generate
+            const params = new URLSearchParams({
+                id: document.id,
+                keywords: keywordExtraction.toString(),
+                metrics: summaryMetrics.toString(),
+                questions: studyQuestions.toString(),
+                autoProcess: 'true', // Signal to auto-start processing
+            })
+            navigate(`/analysis?${params.toString()}`)
         } catch (err) {
             console.error("❌ Error creating document:", err)
             console.error(`⏱️ Failed after ${Date.now() - startTime}ms`)
@@ -266,28 +281,50 @@ export function UploadPage() {
                     {/* Right Column - Settings & Action */}
                     <div className="space-y-6">
                         {/* Summary Type Selection */}
-                        <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm overflow-hidden">
+                        <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm overflow-visible">
                             <div className="px-6 py-4 border-b border-[var(--border)] bg-[var(--muted)]/30">
                                 <h3 className="text-lg font-bold">Summary Type</h3>
                                 <p className="text-sm text-[var(--muted-foreground)]">Choose how to summarize your content</p>
                             </div>
                             <div className="p-4 grid grid-cols-3 gap-3">
                                 {[
-                                    { value: "short", label: "Short", icon: "📄" },
-                                    { value: "detailed", label: "Detailed", icon: "📘" },
-                                    { value: "study_notes", label: "Study Notes", icon: "📌" },
+                                    {
+                                        value: "short",
+                                        label: "Short",
+                                        icon: "📄",
+                                        tooltip: "A concise 2-3 paragraph summary highlighting only the key points. Best for quick review and understanding the main ideas."
+                                    },
+                                    {
+                                        value: "detailed",
+                                        label: "Detailed",
+                                        icon: "📘",
+                                        tooltip: "A comprehensive summary covering all major topics and supporting details. Best for thorough understanding and exam preparation."
+                                    },
+                                    {
+                                        value: "study_notes",
+                                        label: "Study Notes",
+                                        icon: "📌",
+                                        tooltip: "Formatted study notes with bullet points, definitions, and organized sections. Best for active learning and revision."
+                                    },
                                 ].map((type) => (
-                                    <button
-                                        key={type.value}
-                                        onClick={() => setSummaryType(type.value as SummaryType)}
-                                        className={`flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all ${summaryType === type.value
-                                            ? "border-primary bg-primary/5"
-                                            : "border-[var(--border)] hover:border-primary/50"
-                                            }`}
-                                    >
-                                        <span className="text-2xl">{type.icon}</span>
-                                        <span className="text-sm font-medium">{type.label}</span>
-                                    </button>
+                                    <div key={type.value} className="relative group">
+                                        <button
+                                            onClick={() => setSummaryType(type.value as SummaryType)}
+                                            className={`w-full flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all ${summaryType === type.value
+                                                ? "border-primary bg-primary/5"
+                                                : "border-[var(--border)] hover:border-primary/50"
+                                                }`}
+                                        >
+                                            <span className="text-2xl">{type.icon}</span>
+                                            <span className="text-sm font-medium">{type.label}</span>
+                                        </button>
+                                        {/* Tooltip - positioned below to prevent overflow */}
+                                        <div className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-2 px-3 py-2 bg-[var(--foreground)] text-[var(--background)] text-xs rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 w-52 text-center shadow-lg pointer-events-none">
+                                            {type.tooltip}
+                                            {/* Arrow pointing up */}
+                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-[var(--foreground)]" />
+                                        </div>
+                                    </div>
                                 ))}
                             </div>
                         </div>

@@ -41,9 +41,9 @@ export function LoginPage() {
                 <div className="relative z-10 flex flex-col justify-center p-16 text-white">
                     <div className="max-w-lg">
                         <img
-                            src="/studylens2.png"
+                            src="/studylens3.png"
                             alt="StudyLens"
-                            className="h-16 object-contain mb-8 brightness-0 invert"
+                            className="h-8 object-contain mb-8 brightness-0 invert"
                         />
                         <h1 className="text-5xl font-bold mb-6 leading-tight">
                             Transform Your Research Into Knowledge

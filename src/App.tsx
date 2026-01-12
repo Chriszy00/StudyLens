@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom"
+import { HashRouter as Router, Routes, Route, Navigate } from "react-router-dom"
 import { AuthProvider } from "./contexts/AuthContext"
 import { ProtectedRoute } from "./components/ProtectedRoute"
 import {
@@ -15,6 +15,19 @@ import {
   StudyPage,
 } from "./pages"
 
+/**
+ * Main App Component
+ * 
+ * IMPORTANT: We use HashRouter instead of BrowserRouter for Capacitor compatibility!
+ * 
+ * In native apps (Android/iOS), the app is loaded from file:// protocol, not http://.
+ * BrowserRouter uses the HTML5 History API which doesn't work properly with file://.
+ * HashRouter uses URL hashes (#/path) which work everywhere.
+ * 
+ * URLs will look like:
+ * - Web: https://example.com/#/library
+ * - Native: file:///.../index.html#/library
+ */
 function App() {
   return (
     <AuthProvider>

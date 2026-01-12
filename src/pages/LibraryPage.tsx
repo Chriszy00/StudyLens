@@ -1,8 +1,8 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { useQuery } from '@tanstack/react-query'
 import { Header, PageWrapper } from "@/components/layout"
-import { getDocuments, type DocumentWithMeta, type DocumentFilter } from "@/services/documents"
+import { useDocuments } from "@/hooks"
+import type { DocumentWithMeta, DocumentFilter } from "@/services/documents"
 
 const filters: { label: string; value: DocumentFilter }[] = [
     { label: "All Sessions", value: "all" },
@@ -11,45 +11,61 @@ const filters: { label: string; value: DocumentFilter }[] = [
     { label: "Recent", value: "recent" },
 ]
 
-const typeConfig: Record<string, { emoji: string; label: string }> = {
-    short: { emoji: "📄", label: "Short" },
-    detailed: { emoji: "📘", label: "Detailed" },
-    study_notes: { emoji: "📌", label: "Study Notes" },
+// Color configuration for each summary type
+// Each type gets a distinct gradient and icon for quick visual identification
+const typeConfig: Record<string, {
+    icon: string;
+    label: string;
+    gradient: string;
+    iconBg: string;
+}> = {
+    short: {
+        icon: "bolt",
+        label: "Quick Summary",
+        gradient: "linear-gradient(135deg, #0d9488 0%, #14b8a6 50%, #5eead4 100%)",
+        iconBg: "rgba(255, 255, 255, 0.2)"
+    },
+    detailed: {
+        icon: "menu_book",
+        label: "Detailed Overview",
+        gradient: "linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #a5b4fc 100%)",
+        iconBg: "rgba(255, 255, 255, 0.2)"
+    },
+    study_notes: {
+        icon: "school",
+        label: "Study Notes",
+        gradient: "linear-gradient(135deg, #d97706 0%, #f59e0b 50%, #fcd34d 100%)",
+        iconBg: "rgba(255, 255, 255, 0.2)"
+    },
 }
-
-const defaultImages = [
-    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=200&fit=crop",
-    "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=200&fit=crop",
-    "https://images.unsplash.com/photo-1530026405186-ed1f139313f8?w=400&h=200&fit=crop",
-    "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=400&h=200&fit=crop",
-    "https://images.unsplash.com/photo-1576091160399-112ba8d25d1f?w=400&h=200&fit=crop",
-]
 
 export function LibraryPage() {
     const [activeFilter, setActiveFilter] = useState<DocumentFilter>("all")
     const [searchQuery, setSearchQuery] = useState("")
     const navigate = useNavigate()
 
-    const { data: documents = [], isLoading: loading, isError: error, refetch: handleRetry } = useQuery({
-        queryKey: ['documents', activeFilter],
-        queryFn: () => getDocuments(activeFilter)
-    })
+    // Use our custom hook instead of raw useQuery
+    // This encapsulates the query key and fetch logic
+    const { data: documents = [], isLoading: loading, isError: error, refetch: handleRetry } = useDocuments(activeFilter)
 
     // Filter documents by search query
-    const filteredDocuments = documents.filter(doc =>
+    const filteredDocuments = documents.filter((doc: DocumentWithMeta) =>
         doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        doc.tags?.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
+        doc.tags?.some((tag: string) => tag.toLowerCase().includes(searchQuery.toLowerCase()))
     )
 
-    // Get random image for documents without one
-    const getImage = (doc: DocumentWithMeta, index: number) => {
-        return doc.image_url || defaultImages[index % defaultImages.length]
-    }
+
 
     return (
         <PageWrapper>
             <Header
-                title="Study Library"
+                title={
+                    <img
+                        src="/studylens3.png"
+                        alt="StudyLens"
+                        className="h-12"
+                    />
+                }
                 rightAction={
                     <div className="flex items-center gap-3">
                         <button
@@ -154,28 +170,41 @@ export function LibraryPage() {
                 {/* Summary Cards Grid */}
                 {!loading && !error && filteredDocuments.length > 0 && (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {filteredDocuments.map((doc, index) => {
+                        {filteredDocuments.map((doc) => {
                             const typeInfo = typeConfig[doc.type] || typeConfig.short
                             return (
                                 <div
                                     key={doc.id}
                                     className="flex flex-col rounded-xl shadow-sm border border-[var(--border)] bg-[var(--card)] overflow-hidden hover:shadow-md hover:border-primary/30 transition-all cursor-pointer group"
                                 >
-                                    {/* Image */}
+                                    {/* Color-coded Header by Summary Type */}
                                     <div
-                                        className="relative w-full h-40 bg-center bg-cover"
-                                        style={{ backgroundImage: `url("${getImage(doc, index)}")` }}
+                                        className="relative w-full h-32 flex items-center justify-center"
+                                        style={{ background: typeInfo.gradient }}
                                     >
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                                        <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 bg-[var(--card)]/90 backdrop-blur rounded-full shadow-sm border border-[var(--border)]">
-                                            <span className="text-sm leading-none">{typeInfo.emoji}</span>
-                                            <span className="text-[10px] font-bold uppercase tracking-wide">
+                                        {/* Decorative pattern overlay */}
+                                        <div className="absolute inset-0 opacity-10">
+                                            <div className="absolute top-2 left-4 w-16 h-16 rounded-full bg-white/30" />
+                                            <div className="absolute bottom-0 right-8 w-24 h-24 rounded-full bg-white/20 -mb-12" />
+                                        </div>
+
+                                        {/* Center content */}
+                                        <div className="relative flex flex-col items-center gap-2 text-white">
+                                            <div
+                                                className="w-14 h-14 rounded-full flex items-center justify-center"
+                                                style={{ backgroundColor: typeInfo.iconBg }}
+                                            >
+                                                <span className="material-symbols-outlined text-3xl">{typeInfo.icon}</span>
+                                            </div>
+                                            <span className="text-xs font-bold uppercase tracking-widest opacity-90">
                                                 {typeInfo.label}
                                             </span>
                                         </div>
+
+                                        {/* Starred badge */}
                                         {doc.is_starred && (
-                                            <div className="absolute top-3 right-3">
-                                                <span className="material-symbols-outlined text-amber-500">star</span>
+                                            <div className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                                                <span className="material-symbols-outlined text-amber-300">star</span>
                                             </div>
                                         )}
                                     </div>

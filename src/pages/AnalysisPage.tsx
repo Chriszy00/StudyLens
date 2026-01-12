@@ -1,9 +1,8 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Header, PageWrapper } from "@/components/layout"
-import { getDocument } from "@/services/documents"
-import { getSummary, processDocument, type StudyQuestion } from "@/services/ai"
+import { useDocument, useSummary, useProcessDocument } from "@/hooks"
+import type { StudyQuestion } from "@/services/ai"
 
 const summaryTabs = ["Short", "Detailed", "Bullets"]
 
@@ -11,40 +10,139 @@ export function AnalysisPage() {
     const navigate = useNavigate()
     const [searchParams] = useSearchParams()
     const documentId = searchParams.get("id")
-    const queryClient = useQueryClient()
+
+    // Read processing options from URL params (set by UploadPage)
+    const autoProcess = searchParams.get("autoProcess") === "true"
+    const extractKeywords = searchParams.get("keywords") !== "false" // default true
+    // Note: showMetrics param controls UI display only - metrics are always calculated by backend
+    const generateQuestions = searchParams.get("questions") === "true" // default false
 
     const [activeTab, setActiveTab] = useState("Short")
     const [highlightKeywords, setHighlightKeywords] = useState(true)
 
-    // Document Query
-    const { data: document, isLoading: isLoadingDoc, isError: isDocError } = useQuery({
-        queryKey: ['document', documentId],
-        queryFn: () => getDocument(documentId!),
-        enabled: !!documentId
-    })
+    // Track if we've already triggered auto-processing
+    const hasAutoProcessed = useRef(false)
 
-    // Summary Query with Polling
-    const { data: summary, isLoading: isLoadingSummary, error: summaryError } = useQuery({
-        queryKey: ['summary', documentId],
-        queryFn: () => getSummary(documentId!),
-        enabled: !!documentId,
-        refetchInterval: (query) => {
-            const status = query.state.data?.processing_status
-            return (status === 'processing' || status === 'pending') ? 1500 : false
-        }
-    })
+    // Use custom hooks instead of raw useQuery/useMutation
+    // Document Query
+    const { data: document, isLoading: isLoadingDoc, isError: isDocError, fetchStatus: docFetchStatus, status: docStatus } = useDocument(documentId)
+
+    // Summary Query with Polling (polling is handled inside useSummary hook)
+    const { data: summary, isLoading: isLoadingSummary, error: summaryError, fetchStatus: summaryFetchStatus, status: summaryStatus } = useSummary(documentId)
 
     // Generate Summary Mutation
-    const generateMutation = useMutation({
-        mutationFn: () => processDocument(documentId!),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['summary', documentId] })
-        }
+    const generateMutation = useProcessDocument()
+
+    // 🔍 DIAGNOSTIC LOGGING - Remove after debugging
+    console.log('📄 [AnalysisPage] ===== RENDER =====')
+    console.log('📄 [AnalysisPage] documentId from URL:', documentId, '| Type:', typeof documentId)
+    console.log('📄 [AnalysisPage] Query enabled condition (!!documentId):', !!documentId)
+    console.log('📄 [AnalysisPage] Document Query State:', {
+        isLoading: isLoadingDoc,
+        isError: isDocError,
+        fetchStatus: docFetchStatus,
+        status: docStatus,
+        hasData: !!document,
+        documentTitle: document?.title || 'N/A'
     })
+    console.log('📄 [AnalysisPage] Summary Query State:', {
+        isLoading: isLoadingSummary,
+        error: summaryError?.message || null,
+        fetchStatus: summaryFetchStatus,
+        status: summaryStatus,
+        hasData: !!summary,
+        processingStatus: summary?.processing_status || 'N/A'
+    })
+    console.log('📄 [AnalysisPage] Combined isLoading:', isLoadingDoc || isLoadingSummary)
+
+    // Set default active tab based on document type
+    useEffect(() => {
+        if (document?.type) {
+            switch (document.type) {
+                case 'short':
+                    setActiveTab('Short')
+                    break
+                case 'detailed':
+                    setActiveTab('Detailed')
+                    break
+                case 'study_notes':
+                    setActiveTab('Bullets')
+                    break
+            }
+        }
+    }, [document?.type])
+
+    // Auto-trigger processing for new documents (coming from UploadPage)
+    useEffect(() => {
+        if (
+            autoProcess &&
+            documentId &&
+            !hasAutoProcessed.current &&
+            !summary && // No existing summary
+            !generateMutation.isPending &&
+            !isLoadingSummary
+        ) {
+            hasAutoProcessed.current = true
+            console.log('🚀 Auto-triggering AI processing with options:', {
+                extractKeywords,
+                generateQuestions,
+            })
+
+            // Trigger AI processing with user's selected options
+            generateMutation.mutate({
+                documentId,
+                options: {
+                    generateShortSummary: true,
+                    generateDetailedSummary: true,
+                    extractKeywords,
+                    generateQuestions,
+                },
+            }, {
+                onSuccess: (data) => {
+                    if (data.wasChunked) {
+                        console.log(`📊 Document processed in ${data.chunksProcessed} chunks`)
+                        setChunkingInfo({
+                            wasChunked: true,
+                            chunksProcessed: data.chunksProcessed || 0,
+                            wasTruncated: data.wasTruncated || false,
+                            originalLength: data.originalLength || 0,
+                        })
+                    }
+                }
+            })
+        }
+    }, [autoProcess, documentId, summary, generateMutation, isLoadingSummary, extractKeywords, generateQuestions])
+
+    // State for chunking information (to show user warnings/info)
+    const [chunkingInfo, setChunkingInfo] = useState<{
+        wasChunked: boolean
+        chunksProcessed: number
+        wasTruncated: boolean
+        originalLength: number
+    } | null>(null)
 
     const handleGenerateSummary = () => {
         if (!documentId) return
-        generateMutation.mutate()
+        generateMutation.mutate({
+            documentId,
+            options: {
+                generateShortSummary: true,
+                generateDetailedSummary: true,
+                extractKeywords: true,
+                generateQuestions: true,
+            },
+        }, {
+            onSuccess: (data) => {
+                if (data.wasChunked) {
+                    setChunkingInfo({
+                        wasChunked: true,
+                        chunksProcessed: data.chunksProcessed || 0,
+                        wasTruncated: data.wasTruncated || false,
+                        originalLength: data.originalLength || 0,
+                    })
+                }
+            }
+        })
     }
 
     const isLoading = isLoadingDoc || isLoadingSummary
@@ -91,6 +189,86 @@ export function AnalysisPage() {
                     )
                 })}
             </>
+        )
+    }
+
+    // Render detailed summary with formatted sections
+    function renderDetailedSummary(text: string) {
+        // Section headers and their icons/colors
+        const sectionConfig: Record<string, { icon: string; color: string; label: string }> = {
+            'INTRODUCTION': { icon: 'play_circle', color: 'text-blue-500', label: 'Introduction' },
+            'CORE CONCEPTS': { icon: 'hub', color: 'text-purple-500', label: 'Core Concepts' },
+            'KEY COMPONENTS': { icon: 'settings', color: 'text-emerald-500', label: 'Key Components' },
+            'APPLICATIONS': { icon: 'apps', color: 'text-orange-500', label: 'Applications' },
+            'CONNECTIONS': { icon: 'share', color: 'text-cyan-500', label: 'Connections' },
+            'KEY TAKEAWAYS': { icon: 'lightbulb', color: 'text-amber-500', label: 'Key Takeaways' },
+        }
+
+        // Try to parse sections
+        const sectionRegex = /\*\*([A-Z\s]+):\*\*\s*/g
+        const sections: Array<{ header: string; content: string }> = []
+        let match
+
+        // Clone regex for exec
+        const regex = new RegExp(sectionRegex)
+        const matches: Array<{ header: string; start: number; end: number }> = []
+
+        while ((match = regex.exec(text)) !== null) {
+            matches.push({
+                header: match[1].trim(),
+                start: match.index,
+                end: match.index + match[0].length
+            })
+        }
+
+        // If no sections found, render as formatted paragraphs
+        if (matches.length === 0) {
+            // Split by double newlines and render as paragraphs
+            const paragraphs = text.split(/\n\n+/).filter(p => p.trim())
+            return (
+                <div className="space-y-4">
+                    {paragraphs.map((para, i) => (
+                        <p key={i} className="text-base leading-relaxed">
+                            {para.trim()}
+                        </p>
+                    ))}
+                </div>
+            )
+        }
+
+        // Extract content between headers
+        for (let i = 0; i < matches.length; i++) {
+            const contentStart = matches[i].end
+            const contentEnd = i < matches.length - 1 ? matches[i + 1].start : text.length
+            const content = text.substring(contentStart, contentEnd).trim()
+            sections.push({ header: matches[i].header, content })
+        }
+
+        return (
+            <div className="space-y-5">
+                {sections.map((section, i) => {
+                    const config = sectionConfig[section.header] || {
+                        icon: 'article',
+                        color: 'text-primary',
+                        label: section.header.charAt(0) + section.header.slice(1).toLowerCase()
+                    }
+                    return (
+                        <div key={i} className="group">
+                            <div className="flex items-center gap-2 mb-2">
+                                <span className={`material-symbols-outlined text-lg ${config.color}`}>
+                                    {config.icon}
+                                </span>
+                                <h5 className={`text-sm font-bold uppercase tracking-wide ${config.color}`}>
+                                    {config.label}
+                                </h5>
+                            </div>
+                            <p className="text-base leading-relaxed pl-7 border-l-2 border-[var(--border)] ml-2">
+                                {section.content}
+                            </p>
+                        </div>
+                    )
+                })}
+            </div>
         )
     }
 
@@ -164,6 +342,45 @@ export function AnalysisPage() {
             />
 
             <div className="py-8">
+                {/* Chunking Info Banner - Shows when document was processed in multiple parts */}
+                {chunkingInfo?.wasChunked && (
+                    <div className={`mb-6 p-4 rounded-xl border flex items-start gap-3 ${chunkingInfo.wasTruncated
+                        ? 'bg-amber-500/10 border-amber-500/30'
+                        : 'bg-blue-500/10 border-blue-500/30'
+                        }`}>
+                        <span className={`material-symbols-outlined text-xl ${chunkingInfo.wasTruncated ? 'text-amber-500' : 'text-blue-500'
+                            }`}>
+                            {chunkingInfo.wasTruncated ? 'warning' : 'info'}
+                        </span>
+                        <div className="flex-1">
+                            <h4 className={`font-semibold text-sm ${chunkingInfo.wasTruncated ? 'text-amber-700 dark:text-amber-400' : 'text-blue-700 dark:text-blue-400'
+                                }`}>
+                                {chunkingInfo.wasTruncated ? 'Large Document - Partial Analysis' : 'Multi-Section Analysis'}
+                            </h4>
+                            <p className="text-sm text-[var(--muted-foreground)] mt-1">
+                                {chunkingInfo.wasTruncated ? (
+                                    <>
+                                        Your document ({Math.round(chunkingInfo.originalLength / 1000)}K characters)
+                                        was too large to analyze completely. We processed the first {chunkingInfo.chunksProcessed} sections
+                                        to generate this summary. Some content at the end may not be included.
+                                    </>
+                                ) : (
+                                    <>
+                                        Your document was analyzed in {chunkingInfo.chunksProcessed} sections
+                                        and combined into a comprehensive summary covering the entire content.
+                                    </>
+                                )}
+                            </p>
+                        </div>
+                        <button
+                            onClick={() => setChunkingInfo(null)}
+                            className="p-1 hover:bg-black/10 rounded-full transition-colors"
+                        >
+                            <span className="material-symbols-outlined text-lg text-[var(--muted-foreground)]">close</span>
+                        </button>
+                    </div>
+                )}
+
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     {/* Left Column - Source Document */}
                     <div className="lg:col-span-1">
@@ -227,9 +444,36 @@ export function AnalysisPage() {
                                     )}
                                 </button>
                                 {(error || summary?.error_message || generateMutation.error) && (
-                                    <p className="text-red-500 mt-4 text-sm">
-                                        {error || summary?.error_message || generateMutation.error?.message}
-                                    </p>
+                                    <div className="mt-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+                                        <div className="flex items-start gap-3">
+                                            <span className="material-symbols-outlined text-red-500 text-xl mt-0.5">error</span>
+                                            <div className="flex-1">
+                                                <p className="text-red-700 dark:text-red-400 font-medium">
+                                                    {(() => {
+                                                        // Get the error message
+                                                        const rawError = error || summary?.error_message || generateMutation.error?.message || 'Unknown error'
+                                                        console.error('🔴 AI Processing Error:', rawError)
+
+                                                        // Check if it's a technical error that needs translation
+                                                        if (rawError.includes('Edge Function') || rawError.includes('non-2xx')) {
+                                                            return 'Our AI service is temporarily unavailable. Please wait a moment and try again.'
+                                                        }
+                                                        if (rawError.includes('timeout') || rawError.includes('Timeout')) {
+                                                            return 'The request took too long. Please try again with a smaller document.'
+                                                        }
+                                                        if (rawError.includes('network') || rawError.includes('Network')) {
+                                                            return 'Unable to connect to the server. Please check your internet connection.'
+                                                        }
+
+                                                        return rawError
+                                                    })()}
+                                                </p>
+                                                <p className="text-red-600/70 dark:text-red-400/70 text-sm mt-1">
+                                                    Click "Generate Summary" to try again
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
                                 )}
                             </div>
                         ) : (
@@ -261,14 +505,16 @@ export function AnalysisPage() {
                                         </div>
 
                                         {activeTab === "Bullets" ? (
-                                            <ul className="space-y-2">
+                                            <ul className="space-y-3">
                                                 {(getCurrentSummaryContent() as string[]).map((point, i) => (
-                                                    <li key={i} className="flex items-start gap-2">
-                                                        <span className="material-symbols-outlined text-primary text-sm mt-1">check_circle</span>
-                                                        <span>{point}</span>
+                                                    <li key={i} className="flex items-start gap-3 p-3 bg-[var(--muted)]/30 rounded-lg">
+                                                        <span className="material-symbols-outlined text-primary text-lg mt-0.5">check_circle</span>
+                                                        <span className="text-base leading-relaxed">{point}</span>
                                                     </li>
                                                 ))}
                                             </ul>
+                                        ) : activeTab === "Detailed" ? (
+                                            renderDetailedSummary(getCurrentSummaryContent() as string)
                                         ) : (
                                             <p className="text-base font-normal leading-relaxed">
                                                 {getCurrentSummaryContent() as string}

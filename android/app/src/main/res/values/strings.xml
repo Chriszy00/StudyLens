@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">StudyLens</string>
+    <string name="title_activity_main">StudyLens</string>
+    <string name="package_name">com.studylens.app</string>
+    <string name="custom_url_scheme">com.studylens.app</string>
+</resources>
