@@ -45,15 +45,35 @@ export function useSummary(documentId: string | null | undefined) {
         queryFn: async () => {
             console.log('🔍 [useSummary] queryFn EXECUTING for documentId:', documentId)
             const result = await getSummary(documentId!)
-            console.log('🔍 [useSummary] queryFn RESULT:', result ? 'Got summary' : 'No summary')
+            console.log('🔍 [useSummary] queryFn RESULT:', result ? `Got summary (status: ${result.processing_status})` : 'No summary')
             return result
         },
         enabled: !!documentId,
+
+        // CRITICAL: Don't cache null results as "fresh"
+        // This ensures we keep polling even if first fetch returns null
+        staleTime: 0,
+
         // Dynamic polling based on processing status
         refetchInterval: (query) => {
-            const status = query.state.data?.processing_status
-            // Poll every 1.5s while processing, stop when done
-            return (status === 'processing' || status === 'pending') ? 1500 : false
+            const data = query.state.data
+            const status = data?.processing_status
+
+            // If no data yet, poll every 2s (summary might be being created)
+            if (!data) {
+                console.log('🔍 [useSummary] No data yet, polling...')
+                return 2000
+            }
+
+            // Poll every 1.5s while processing
+            if (status === 'processing' || status === 'pending') {
+                console.log('🔍 [useSummary] Processing in progress, polling...')
+                return 1500
+            }
+
+            // Stop polling when complete or failed
+            console.log('🔍 [useSummary] Processing complete, stopping poll')
+            return false
         },
         // Don't refetch on window focus while processing
         refetchOnWindowFocus: (query) => {
@@ -70,23 +90,6 @@ export function useSummary(documentId: string | null | undefined) {
 /**
  * Trigger AI processing for a document with configurable options
  * After mutation, the summary query will start polling for results
- * 
- * @example
- * const processMutation = useProcessDocument()
- * 
- * // With default options (all enabled)
- * processMutation.mutate({ documentId: 'xxx' })
- * 
- * // With custom options
- * processMutation.mutate({
- *   documentId: 'xxx',
- *   options: {
- *     generateShortSummary: true,
- *     generateDetailedSummary: false,
- *     extractKeywords: true,
- *     generateQuestions: false,
- *   }
- * })
  */
 export function useProcessDocument() {
     const queryClient = useQueryClient()
@@ -99,12 +102,31 @@ export function useProcessDocument() {
             documentId: string
             options?: AIProcessingOptions
         }) => processDocument(documentId, options),
-        onSuccess: (_, { documentId }) => {
-            // Invalidate summary to trigger refetch (which will start polling)
-            queryClient.invalidateQueries({
+
+        onMutate: async ({ documentId }) => {
+            // Cancel any outgoing refetches so they don't overwrite optimistic update
+            await queryClient.cancelQueries({
                 queryKey: summaryKeys.detail(documentId)
             })
         },
+
+        onSuccess: (_data, { documentId }) => {
+            console.log('✅ [useProcessDocument] Mutation succeeded, invalidating cache')
+
+            // Invalidate and immediately refetch to show new data
+            queryClient.invalidateQueries({
+                queryKey: summaryKeys.detail(documentId)
+            })
+
+            // Also invalidate the "all summaries" key
+            queryClient.invalidateQueries({
+                queryKey: summaryKeys.all
+            })
+        },
+
+        onError: (error) => {
+            console.error('❌ [useProcessDocument] Mutation failed:', error)
+        }
     })
 }
 

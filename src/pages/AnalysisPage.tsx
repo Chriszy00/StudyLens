@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { useNavigate, useSearchParams } from "react-router-dom"
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom"
 import { Header, PageWrapper } from "@/components/layout"
 import { FileViewer } from "@/components/FileViewer"
 import { useDocument, useSummary, useProcessDocument } from "@/hooks"
@@ -32,6 +32,10 @@ export function AnalysisPage() {
 
     // Track if we've already triggered auto-processing
     const hasAutoProcessed = useRef(false)
+
+    // Ref for scrolling to study section
+    const studySectionRef = useRef<HTMLDivElement>(null)
+    const location = useLocation()
 
     // Use custom hooks instead of raw useQuery/useMutation
     // Document Query
@@ -86,6 +90,16 @@ export function AnalysisPage() {
             setViewMode('text')
         }
     }, [document?.type, document?.storage_path])
+
+    // Scroll to study section when hash is #study and summary is loaded
+    useEffect(() => {
+        if (location.hash === '#study' && summary?.study_questions && studySectionRef.current) {
+            // Small delay to ensure DOM is rendered
+            setTimeout(() => {
+                studySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }, 100)
+        }
+    }, [location.hash, summary?.study_questions])
 
     // Auto-trigger processing for new documents (coming from UploadPage)
     // Only triggers if summary feature is enabled by admin
@@ -771,12 +785,37 @@ export function AnalysisPage() {
 
                                         {activeTab === "Bullets" ? (
                                             <ul className="space-y-3">
-                                                {(getCurrentSummaryContent() as string[]).map((point, i) => (
-                                                    <li key={i} className="flex items-start gap-3 p-3 bg-[var(--muted)]/30 rounded-lg">
-                                                        <span className="material-symbols-outlined text-primary text-lg mt-0.5">check_circle</span>
-                                                        <span className="text-base leading-relaxed">{point}</span>
-                                                    </li>
-                                                ))}
+                                                {(getCurrentSummaryContent() as string[]).map((point, i) => {
+                                                    // Find citation for this bullet point
+                                                    const citation = summary.citations && Array.isArray(summary.citations)
+                                                        ? (summary.citations as { claim: string; sourceQuote: string; verified: boolean }[]).find(c => c.claim === point)
+                                                        : null
+
+                                                    return (
+                                                        <li key={i} className="p-3 bg-[var(--muted)]/30 rounded-lg border border-transparent hover:border-primary/20 transition-colors">
+                                                            <div className="flex items-start gap-3">
+                                                                <span className="material-symbols-outlined text-primary text-lg mt-0.5">check_circle</span>
+                                                                <div className="flex-1">
+                                                                    <span className="text-base leading-relaxed block">{point}</span>
+                                                                    {citation && citation.sourceQuote && (
+                                                                        <details className="mt-2 group">
+                                                                            <summary className="cursor-pointer text-xs text-primary hover:underline flex items-center gap-1">
+                                                                                <span className="material-symbols-outlined text-sm">
+                                                                                    {citation.verified ? 'verified' : 'help'}
+                                                                                </span>
+                                                                                <span>{citation.verified ? 'View source' : 'Source (unverified)'}</span>
+                                                                                <span className="material-symbols-outlined text-xs group-open:rotate-180 transition-transform">expand_more</span>
+                                                                            </summary>
+                                                                            <blockquote className={`mt-2 pl-3 border-l-2 text-sm italic text-[var(--muted-foreground)] ${citation.verified ? 'border-emerald-500' : 'border-amber-500'}`}>
+                                                                                "{citation.sourceQuote}"
+                                                                            </blockquote>
+                                                                        </details>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </li>
+                                                    )
+                                                })}
                                             </ul>
                                         ) : activeTab === "Detailed" ? (
                                             renderDetailedSummary(getCurrentSummaryContent() as string)
@@ -818,9 +857,9 @@ export function AnalysisPage() {
                                     <div className="bg-[var(--card)] p-5 rounded-xl border border-[var(--border)] shadow-sm">
                                         <div className="flex items-center justify-between mb-2">
                                             <div className="flex items-center gap-2">
-                                                <span className="material-symbols-outlined text-primary">key</span>
+                                                <span className="material-symbols-outlined text-primary">verified</span>
                                                 <p className="text-sm text-[var(--muted-foreground)] font-medium">
-                                                    Keyword Coverage
+                                                    Source Verification
                                                 </p>
                                             </div>
                                         </div>
@@ -828,12 +867,19 @@ export function AnalysisPage() {
                                             <span className="text-3xl font-bold text-primary">
                                                 {summary.keyword_coverage || 0}%
                                             </span>
-                                            <span className="material-symbols-outlined text-emerald-500 text-lg mb-1">
-                                                check_circle
+                                            <span className={`material-symbols-outlined text-lg mb-1 ${(summary.keyword_coverage || 0) >= 70 ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                                {(summary.keyword_coverage || 0) >= 70 ? 'verified' : 'pending'}
                                             </span>
-                                            <span className="text-emerald-500 text-sm font-medium mb-1">Complete</span>
+                                            <span className={`text-sm font-medium mb-1 ${(summary.keyword_coverage || 0) >= 70 ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                                {(summary.keyword_coverage || 0) >= 70 ? 'Grounded' : 'Partial'}
+                                            </span>
                                         </div>
-                                        <p className="text-xs text-[var(--muted-foreground)] mt-2">Key concepts preserved</p>
+                                        <p className="text-xs text-[var(--muted-foreground)] mt-2">
+                                            {summary.citations && Array.isArray(summary.citations) && summary.citations.length > 0
+                                                ? `${summary.citations.filter((c: { verified?: boolean }) => c.verified).length}/${summary.citations.length} claims verified in source`
+                                                : 'AI claims verified against source document'
+                                            }
+                                        </p>
                                     </div>
                                 </div>
 
@@ -859,19 +905,34 @@ export function AnalysisPage() {
 
                                 {/* Study Questions */}
                                 {summary.study_questions && (summary.study_questions as StudyQuestion[]).length > 0 && (
-                                    <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm overflow-hidden">
-                                        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] bg-[var(--muted)]/30">
+                                    <div ref={studySectionRef} id="study" className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm overflow-hidden scroll-mt-24">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-6 py-4 border-b border-[var(--border)] bg-[var(--muted)]/30">
                                             <div className="flex items-center gap-2">
                                                 <span className="material-symbols-outlined text-primary">quiz</span>
                                                 <h4 className="text-sm font-bold uppercase tracking-wider">Study Questions</h4>
                                             </div>
-                                            <button
-                                                onClick={() => navigate(`/study?id=${documentId}`)}
-                                                className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg font-semibold text-sm hover:bg-primary/90 transition-colors"
-                                            >
-                                                <span className="material-symbols-outlined text-lg">school</span>
-                                                Study Flashcards
-                                            </button>
+                                            {/* Study Mode Selector */}
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs text-[var(--muted-foreground)] font-medium hidden sm:inline">Study Mode:</span>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => navigate(`/study?id=${documentId}`)}
+                                                        className="group flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg font-semibold text-sm hover:bg-primary/90 transition-all hover:shadow-md"
+                                                        title="Self-paced flashcard review"
+                                                    >
+                                                        <span className="material-symbols-outlined text-lg group-hover:scale-110 transition-transform">style</span>
+                                                        <span className="hidden sm:inline">Flashcards</span>
+                                                    </button>
+                                                    <button
+                                                        onClick={() => navigate(`/quiz?id=${documentId}`)}
+                                                        className="group flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded-lg font-semibold text-sm hover:bg-amber-600 transition-all hover:shadow-md"
+                                                        title="Multiple choice quiz"
+                                                    >
+                                                        <span className="material-symbols-outlined text-lg group-hover:scale-110 transition-transform">fact_check</span>
+                                                        <span className="hidden sm:inline">Quiz (MCQ)</span>
+                                                    </button>
+                                                </div>
+                                            </div>
                                         </div>
                                         <div className="p-6 space-y-4">
                                             {(summary.study_questions as StudyQuestion[]).map((q, i) => (

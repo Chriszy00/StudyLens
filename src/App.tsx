@@ -16,6 +16,7 @@ import {
   MethodologyPage,
   StudyPage,
   AdminPage,
+  QuizPage,
 } from "./pages"
 
 /**
@@ -79,6 +80,11 @@ function App() {
               <AdminRoute>
                 <AdminPage />
               </AdminRoute>
+            } />
+            <Route path="/quiz" element={
+              <ProtectedRoute>
+                <QuizPage />
+              </ProtectedRoute>
             } />
             <Route path="/states" element={<StatesGalleryPage />} />
             <Route path="/methodology" element={<MethodologyPage />} />

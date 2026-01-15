@@ -107,8 +107,9 @@ export interface Database {
                     bullet_points: string[] | null
                     keywords: string[] | null
                     study_questions: Json | null
+                    citations: Json | null  // Array of {claim, sourceQuote, verified, section}
                     compression_ratio: number | null
-                    keyword_coverage: number | null
+                    keyword_coverage: number | null  // Now used as citation verification rate
                     processing_status: 'pending' | 'processing' | 'completed' | 'failed'
                     error_message: string | null
                     created_at: string
@@ -122,6 +123,7 @@ export interface Database {
                     bullet_points?: string[] | null
                     keywords?: string[] | null
                     study_questions?: Json | null
+                    citations?: Json | null
                     compression_ratio?: number | null
                     keyword_coverage?: number | null
                     processing_status?: 'pending' | 'processing' | 'completed' | 'failed'
@@ -137,6 +139,7 @@ export interface Database {
                     bullet_points?: string[] | null
                     keywords?: string[] | null
                     study_questions?: Json | null
+                    citations?: Json | null
                     compression_ratio?: number | null
                     keyword_coverage?: number | null
                     processing_status?: 'pending' | 'processing' | 'completed' | 'failed'

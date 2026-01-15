@@ -1,5 +1,16 @@
 import { supabase } from '@/lib/supabase'
 
+/**
+ * Citation for grounding AI output in source document
+ * Each citation links a claim to verbatim text from the source
+ */
+export interface Citation {
+    claim: string           // The AI's summarized statement
+    sourceQuote: string     // Exact quote from source document
+    verified: boolean       // Whether quote was found in document
+    section?: number        // Which chunk/section it came from
+}
+
 export interface Summary {
     id: string
     document_id: string
@@ -8,8 +19,9 @@ export interface Summary {
     bullet_points: string[] | null
     keywords: string[] | null
     study_questions: StudyQuestion[] | null
+    citations: Citation[] | null  // Source references for grounding
     compression_ratio: number | null
-    keyword_coverage: number | null
+    keyword_coverage: number | null  // Now used as citation verification rate
     processing_status: 'pending' | 'processing' | 'completed' | 'failed'
     error_message: string | null
     created_at: string
@@ -20,6 +32,7 @@ export interface StudyQuestion {
     question: string
     answer: string
     difficulty: 'easy' | 'medium' | 'hard'
+    sourceQuote?: string  // Quote from document supporting this Q&A
 }
 
 export interface AIProcessingOptions {
@@ -28,6 +41,7 @@ export interface AIProcessingOptions {
     extractKeywords: boolean
     generateQuestions: boolean
 }
+
 
 /**
  * Response from the process-document edge function

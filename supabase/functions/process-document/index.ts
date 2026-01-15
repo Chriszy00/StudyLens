@@ -26,6 +26,24 @@ interface ChunkResult {
     keywords: string[]
 }
 
+// Citation for grounding AI output in source document
+interface Citation {
+    claim: string           // The AI's summarized statement
+    sourceQuote: string     // Exact quote from source document
+    verified: boolean       // Whether quote was found in document
+    section?: number        // Which chunk/section it came from
+}
+
+// Results structure with citations
+interface ProcessingResults {
+    shortSummary: string
+    detailedSummary: string
+    bulletPoints: string[]
+    keywords: string[]
+    studyQuestions: Array<{ question: string, answer: string, difficulty: string, sourceQuote?: string }>
+    citations: Citation[]
+}
+
 // Configuration
 const CHUNK_SIZE = 4000  // Characters per chunk
 const MAX_CHUNKS = 10    // Maximum chunks to process (prevents runaway costs)
@@ -117,7 +135,8 @@ serve(async (req) => {
             detailedSummary: string
             bulletPoints: string[]
             keywords: string[]
-            studyQuestions: Array<{ question: string, answer: string, difficulty: string }>
+            studyQuestions: Array<{ question: string, answer: string, difficulty: string, sourceQuote?: string }>
+            citations?: Citation[]
         }
 
         if (wasChunked) {
@@ -137,7 +156,13 @@ serve(async (req) => {
         const summaryWords = ((results.shortSummary || '') + ' ' + (results.detailedSummary || '')).split(/\s+/).length
         const compressionRatio = Math.min(99, Math.max(0, Math.round((1 - summaryWords / originalWords) * 100)))
 
-        // Update summary with results (including chunking metadata)
+        // Calculate citation verification rate
+        const citations = results.citations || []
+        const verifiedCount = citations.filter(c => c.verified).length
+        const citationRate = citations.length > 0 ? Math.round((verifiedCount / citations.length) * 100) : 0
+        console.log(`📚 Citation verification rate: ${citationRate}% (${verifiedCount}/${citations.length})`)
+
+        // Update summary with results (including citations)
         const { error: updateError } = await supabase
             .from('summaries')
             .update({
@@ -146,11 +171,10 @@ serve(async (req) => {
                 bullet_points: results.bulletPoints,
                 keywords: results.keywords,
                 study_questions: results.studyQuestions,
+                citations: citations, // Store citations for UI display
                 compression_ratio: compressionRatio,
-                keyword_coverage: 85,
+                keyword_coverage: citationRate, // Repurpose this field for citation rate
                 processing_status: 'completed',
-                // Store chunking metadata in a JSON field or as part of the summary
-                // We'll append a note to the summary if it was chunked
             })
             .eq('id', summaryId)
 
@@ -450,14 +474,16 @@ Rules:
 }
 
 /**
- * Process a single (non-chunked) document
+ * Process a single (non-chunked) document with citations
  */
 async function processSingleChunk(
     text: string,
     options: ProcessRequest['options'],
     apiKey: string
-) {
+): Promise<ProcessingResults> {
     const prompt = `You are an expert academic tutor creating study materials for university students. Analyze this academic text and create comprehensive, learning-focused content.
+
+CRITICAL REQUIREMENT: For EVERY bullet point and study question, you MUST include a "sourceQuote" field containing the EXACT text from the document that supports your claim. This is essential for academic integrity and grounding.
 
 TEXT:
 ${text}
@@ -466,16 +492,32 @@ Respond with this exact JSON structure:
 {
   "shortSummary": "YOUR SHORT SUMMARY HERE - see requirements below",
   "detailedSummary": "YOUR DETAILED SUMMARY HERE - see requirements below",
-  "bulletPoints": ["STUDY NOTE 1", "STUDY NOTE 2", "STUDY NOTE 3", "STUDY NOTE 4", "STUDY NOTE 5", "STUDY NOTE 6", "STUDY NOTE 7", "STUDY NOTE 8"],
+  "bulletPoints": [
+    {"text": "STUDY NOTE 1", "sourceQuote": "exact quote from document"},
+    {"text": "STUDY NOTE 2", "sourceQuote": "exact quote from document"},
+    {"text": "STUDY NOTE 3", "sourceQuote": "exact quote from document"},
+    {"text": "STUDY NOTE 4", "sourceQuote": "exact quote from document"},
+    {"text": "STUDY NOTE 5", "sourceQuote": "exact quote from document"},
+    {"text": "STUDY NOTE 6", "sourceQuote": "exact quote from document"},
+    {"text": "STUDY NOTE 7", "sourceQuote": "exact quote from document"},
+    {"text": "STUDY NOTE 8", "sourceQuote": "exact quote from document"}
+  ],
   "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5", "keyword6", "keyword7", "keyword8"],
   "studyQuestions": [
-    {"question": "Q1?", "answer": "A1", "difficulty": "easy"},
-    {"question": "Q2?", "answer": "A2", "difficulty": "medium"},
-    {"question": "Q3?", "answer": "A3", "difficulty": "hard"},
-    {"question": "Q4?", "answer": "A4", "difficulty": "medium"},
-    {"question": "Q5?", "answer": "A5", "difficulty": "hard"}
+    {"question": "Q1?", "answer": "A1", "difficulty": "easy", "sourceQuote": "exact text supporting this Q&A"},
+    {"question": "Q2?", "answer": "A2", "difficulty": "medium", "sourceQuote": "exact text supporting this Q&A"},
+    {"question": "Q3?", "answer": "A3", "difficulty": "hard", "sourceQuote": "exact text supporting this Q&A"},
+    {"question": "Q4?", "answer": "A4", "difficulty": "medium", "sourceQuote": "exact text supporting this Q&A"},
+    {"question": "Q5?", "answer": "A5", "difficulty": "hard", "sourceQuote": "exact text supporting this Q&A"}
   ]
 }
+
+=== SOURCE QUOTE REQUIREMENTS ===
+IMPORTANT: The "sourceQuote" field must contain the EXACT words from the TEXT above.
+- Copy the relevant sentence(s) VERBATIM from the document
+- Keep quotes 10-50 words for clarity
+- The quote must directly support the claim/note/question
+- If multiple sentences are needed, include them all
 
 === SHORT SUMMARY REQUIREMENTS (4-6 sentences, ~80-120 words) ===
 Must include:
@@ -520,23 +562,72 @@ Generate exactly 5 questions that:
 - Medium (2): Tests understanding of relationships or applications
 - Hard (2): Tests analysis, synthesis, or problem-solving
 Include DETAILED answers (2-3 sentences each) that explain the reasoning
+MUST include sourceQuote for each question
 
 Rules:
 - Return ONLY valid JSON, no markdown code blocks
 - Write in clear, educational language suitable for university students
 - Be specific and precise - avoid vague or generic statements
-- Prioritize exam-relevant information`
+- Prioritize exam-relevant information
+- ALWAYS include sourceQuote with exact text from the document`
 
-    const response = await callGemini(prompt, apiKey, 2500)
+    const response = await callGemini(prompt, apiKey, 3500) // Increased tokens for citations
 
     try {
         const parsed = JSON.parse(response)
+
+        // Extract bullet points - handle both old format (string[]) and new format with citations
+        let bulletPoints: string[] = []
+        let citations: Citation[] = []
+
+        if (Array.isArray(parsed.bulletPoints)) {
+            parsed.bulletPoints.forEach((bp: string | { text: string; sourceQuote?: string }, index: number) => {
+                if (typeof bp === 'string') {
+                    bulletPoints.push(bp)
+                } else if (bp.text) {
+                    bulletPoints.push(bp.text)
+                    if (bp.sourceQuote) {
+                        // Verify the citation exists in the source text
+                        const verified = verifyCitation(bp.sourceQuote, text)
+                        citations.push({
+                            claim: bp.text,
+                            sourceQuote: bp.sourceQuote,
+                            verified,
+                            section: 1
+                        })
+                    }
+                }
+            })
+        }
+
+        // Process study questions with citations
+        const studyQuestions = (parsed.studyQuestions || []).map((q: { question: string; answer: string; difficulty: string; sourceQuote?: string }) => {
+            if (q.sourceQuote) {
+                const verified = verifyCitation(q.sourceQuote, text)
+                citations.push({
+                    claim: q.question,
+                    sourceQuote: q.sourceQuote,
+                    verified,
+                    section: 1
+                })
+            }
+            return {
+                question: q.question,
+                answer: q.answer,
+                difficulty: q.difficulty,
+                sourceQuote: q.sourceQuote
+            }
+        })
+
+        console.log(`📚 Generated ${citations.length} citations, ${citations.filter(c => c.verified).length} verified`)
+
         return {
             shortSummary: parsed.shortSummary || '',
             detailedSummary: parsed.detailedSummary || '',
-            bulletPoints: parsed.bulletPoints || [],
+            bulletPoints,
             keywords: parsed.keywords || [],
-            studyQuestions: parsed.studyQuestions || [],
+            studyQuestions,
+            citations
         }
     } catch {
         console.warn('JSON parse failed, using fallback')
@@ -546,8 +637,108 @@ Rules:
             bulletPoints: ['Summary generated - see detailed view'],
             keywords: ['document', 'analysis'],
             studyQuestions: [],
+            citations: []
         }
     }
+}
+
+/**
+ * Verify that a citation quote actually exists in the source text
+ * Enhanced to handle PPTX-to-PDF conversion issues:
+ * - Text fragmentation (words split across lines)
+ * - Strange whitespace and formatting
+ * - Unicode normalization issues
+ */
+function verifyCitation(quote: string, sourceText: string): boolean {
+    if (!quote || !sourceText) return false
+
+    // AGGRESSIVE normalization for both texts
+    const normalize = (text: string): string => {
+        return text
+            .toLowerCase()
+            // Remove all types of whitespace and line breaks
+            .replace(/[\r\n\t\f\v]+/g, ' ')
+            // Normalize unicode characters
+            .normalize('NFKC')
+            // Remove special characters but keep alphanumeric
+            .replace(/[^\w\s]/g, ' ')
+            // Collapse multiple spaces to single
+            .replace(/\s+/g, ' ')
+            .trim()
+    }
+
+    const normalizedQuote = normalize(quote)
+    const normalizedSource = normalize(sourceText)
+
+    // Strategy 1: Exact substring match (after normalization)
+    if (normalizedSource.includes(normalizedQuote)) {
+        console.log('✅ Citation verified via exact match')
+        return true
+    }
+
+    // Strategy 2: Key phrases match (for shorter, distinctive phrases)
+    // Extract 3-4 word phrases from the quote and check if they exist
+    const quoteWords = normalizedQuote.split(' ').filter(w => w.length > 2)
+
+    if (quoteWords.length >= 3) {
+        // Check 3-word phrases
+        let phrasesFound = 0
+        const totalPhrases = Math.max(1, quoteWords.length - 2)
+
+        for (let i = 0; i < quoteWords.length - 2; i++) {
+            const phrase = `${quoteWords[i]} ${quoteWords[i + 1]} ${quoteWords[i + 2]}`
+            if (normalizedSource.includes(phrase)) {
+                phrasesFound++
+            }
+        }
+
+        const phraseMatchRatio = phrasesFound / totalPhrases
+        if (phraseMatchRatio >= 0.5) {
+            console.log(`✅ Citation verified via phrase match (${phrasesFound}/${totalPhrases} phrases)`)
+            return true
+        }
+    }
+
+    // Strategy 3: Word-by-word sequential matching (handles fragmented text)
+    // Words should appear in ROUGH order but can have gaps
+    if (quoteWords.length >= 4) {
+        let matchedWords = 0
+        let searchPos = 0
+
+        for (const word of quoteWords) {
+            // Look for the word anywhere after current position, but within reasonable distance
+            const windowSize = 1000 // Characters to look ahead
+            const searchWindow = normalizedSource.substring(searchPos, searchPos + windowSize)
+            const foundPos = searchWindow.indexOf(word)
+
+            if (foundPos !== -1) {
+                matchedWords++
+                searchPos = searchPos + foundPos + word.length
+            }
+        }
+
+        const matchRatio = matchedWords / quoteWords.length
+        if (matchRatio >= 0.6) { // 60% of words found in sequence
+            console.log(`✅ Citation verified via word sequence (${matchedWords}/${quoteWords.length} words, ${Math.round(matchRatio * 100)}%)`)
+            return true
+        }
+    }
+
+    // Strategy 4: Bag-of-words match (for very fragmented text)
+    // Check if most unique words from quote exist anywhere in source
+    const significantWords = quoteWords.filter(w => w.length >= 4) // Only longer words
+    if (significantWords.length >= 3) {
+        const wordsFound = significantWords.filter(w => normalizedSource.includes(w)).length
+        const wordMatchRatio = wordsFound / significantWords.length
+
+        if (wordMatchRatio >= 0.8) { // 80% of significant words found anywhere
+            console.log(`✅ Citation verified via bag-of-words (${wordsFound}/${significantWords.length} words)`)
+            return true
+        }
+    }
+
+    console.log(`❌ Citation not verified: "${normalizedQuote.substring(0, 50)}..."`)
+    return false
 }
 
 /**

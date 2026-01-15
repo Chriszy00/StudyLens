@@ -426,22 +426,31 @@ export function StudyPage() {
                 {/* Rating buttons (only show when flipped) */}
                 {isFlipped && (
                     <div className="mt-8 space-y-4">
-                        <p className="text-center text-sm text-[var(--muted-foreground)]">
-                            How well did you know this?
-                        </p>
+                        {/* Instruction Panel - Clear call to action */}
+                        <div className="bg-primary/10 border border-primary/20 rounded-xl p-4">
+                            <div className="flex items-center justify-center gap-2 mb-1">
+                                <span className="material-symbols-outlined text-primary text-lg">touch_app</span>
+                                <p className="text-center font-semibold text-primary">
+                                    Rate Your Recall
+                                </p>
+                            </div>
+                            <p className="text-center text-xs text-[var(--muted-foreground)]">
+                                How well did you remember this? Tap a button below to continue.
+                            </p>
+                        </div>
                         <div className="grid grid-cols-4 gap-3">
                             <button
                                 onClick={() => handleRating(1)}
                                 disabled={reviewMutation.isPending}
-                                className="py-4 px-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1 disabled:opacity-50"
+                                className="py-4 px-2 bg-red-100 hover:bg-red-200 hover:scale-105 text-red-700 rounded-xl font-medium transition-all flex flex-col items-center gap-1 disabled:opacity-50 shadow-sm hover:shadow-md"
                             >
                                 <span className="material-symbols-outlined">sentiment_very_dissatisfied</span>
-                                <span className="text-xs">Again</span>
+                                <span className="text-xs">Forgot</span>
                             </button>
                             <button
                                 onClick={() => handleRating(2)}
                                 disabled={reviewMutation.isPending}
-                                className="py-4 px-2 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1 disabled:opacity-50"
+                                className="py-4 px-2 bg-orange-100 hover:bg-orange-200 hover:scale-105 text-orange-700 rounded-xl font-medium transition-all flex flex-col items-center gap-1 disabled:opacity-50 shadow-sm hover:shadow-md"
                             >
                                 <span className="material-symbols-outlined">sentiment_dissatisfied</span>
                                 <span className="text-xs">Hard</span>
@@ -449,7 +458,7 @@ export function StudyPage() {
                             <button
                                 onClick={() => handleRating(4)}
                                 disabled={reviewMutation.isPending}
-                                className="py-4 px-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1 disabled:opacity-50"
+                                className="py-4 px-2 bg-blue-100 hover:bg-blue-200 hover:scale-105 text-blue-700 rounded-xl font-medium transition-all flex flex-col items-center gap-1 disabled:opacity-50 shadow-sm hover:shadow-md"
                             >
                                 <span className="material-symbols-outlined">sentiment_satisfied</span>
                                 <span className="text-xs">Good</span>
@@ -457,7 +466,7 @@ export function StudyPage() {
                             <button
                                 onClick={() => handleRating(5)}
                                 disabled={reviewMutation.isPending}
-                                className="py-4 px-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl font-medium transition-colors flex flex-col items-center gap-1 disabled:opacity-50"
+                                className="py-4 px-2 bg-emerald-100 hover:bg-emerald-200 hover:scale-105 text-emerald-700 rounded-xl font-medium transition-all flex flex-col items-center gap-1 disabled:opacity-50 shadow-sm hover:shadow-md"
                             >
                                 <span className="material-symbols-outlined">sentiment_very_satisfied</span>
                                 <span className="text-xs">Easy</span>
@@ -466,15 +475,15 @@ export function StudyPage() {
                     </div>
                 )}
 
-                {/* Results so far */}
+                {/* Progress tracker - Self-assessment for flashcards */}
                 <div className="mt-8 flex justify-center gap-8">
-                    <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                        <span className="text-sm">{results.correct} correct</span>
+                    <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 rounded-full">
+                        <span className="material-symbols-outlined text-emerald-500 text-sm">check_circle</span>
+                        <span className="text-sm font-medium text-emerald-700">{results.correct} Knew it</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-red-500" />
-                        <span className="text-sm">{results.incorrect} to review</span>
+                    <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 rounded-full">
+                        <span className="material-symbols-outlined text-amber-500 text-sm">refresh</span>
+                        <span className="text-sm font-medium text-amber-700">{results.incorrect} Needs practice</span>
                     </div>
                 </div>
             </div>

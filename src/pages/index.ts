@@ -10,4 +10,6 @@ export { StatesGalleryPage } from './StatesGalleryPage'
 export { MethodologyPage } from './MethodologyPage'
 export { StudyPage } from './StudyPage'
 export { AdminPage } from './AdminPage'
+export { QuizPage } from './QuizPage'
+
 

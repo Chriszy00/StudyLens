@@ -291,11 +291,11 @@ export function LibraryPage() {
                                                 Summary
                                             </button>
                                             <button
-                                                onClick={() => navigate(`/study?id=${doc.id}`)}
+                                                onClick={() => navigate(`/analysis?id=${doc.id}#study`)}
                                                 className="flex-1 h-10 flex items-center justify-center gap-2 rounded-lg border border-primary text-primary font-semibold text-sm hover:bg-primary/10 transition-colors"
                                             >
-                                                <span className="material-symbols-outlined text-sm">style</span>
-                                                Flashcards
+                                                <span className="material-symbols-outlined text-sm">school</span>
+                                                Study
                                             </button>
                                         </div>
                                     </div>
