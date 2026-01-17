@@ -56,17 +56,39 @@ export function useDocuments(filter: DocumentFilter = 'all') {
 
     const query = useQuery({
         queryKey: documentKeys.list(filter),
-        queryFn: async () => {
+        queryFn: async ({ signal }) => {
             console.log('📚 [useDocuments] 🔄 FETCHING documents from Supabase...')
-            const result = await getDocuments(filter)
-            console.log('📚 [useDocuments] ✅ Fetched', result.length, 'documents')
-            return result
+
+            // If this query was cancelled, don't fetch
+            if (signal?.aborted) {
+                console.log('📚 [useDocuments] ⚠️ Query was aborted before fetch')
+                throw new Error('Query cancelled')
+            }
+
+            try {
+                // FIX: Pass the abort signal to getDocuments so it can cancel the request
+                const result = await getDocuments(filter, signal)
+
+                console.log('📚 [useDocuments] ✅ Fetched', result.length, 'documents')
+                return result
+            } catch (error) {
+                // If aborted, don't count as an error
+                if (signal?.aborted || (error as Error)?.message?.includes('cancelled')) {
+                    console.log('📚 [useDocuments] ⚠️ Query was cancelled')
+                    throw new Error('Query cancelled')
+                }
+                console.error('📚 [useDocuments] ❌ Fetch failed:', error)
+                throw error
+            }
         },
         // IMPORTANT: Always refetch when component mounts to ensure fresh data
         // This is crucial for seeing newly uploaded documents
         refetchOnMount: 'always',
         // Keep stale time low for document lists - we want fresh data
-        staleTime: 1000 * 5, // 5 seconds (was 2 minutes - too long!)
+        staleTime: 1000 * 5, // 5 seconds
+        // Add retry logic for handling stale connections after inactivity
+        retry: 2,
+        retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),
     })
 
     console.log('📚 [useDocuments] Query state:', {
@@ -95,9 +117,10 @@ export function useDocument(id: string | null | undefined) {
 
     return useQuery({
         queryKey: documentKeys.detail(id || ''),
-        queryFn: async () => {
+        queryFn: async ({ signal }) => {
             console.log('🔍 [useDocument] queryFn EXECUTING for id:', id)
-            const result = await getDocument(id!)
+            // FIX: Pass the abort signal to getDocument
+            const result = await getDocument(id!, signal)
             console.log('🔍 [useDocument] queryFn RESULT:', result ? `Document: ${result.title}` : 'No document')
             return result
         },

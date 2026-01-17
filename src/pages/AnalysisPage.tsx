@@ -236,18 +236,20 @@ export function AnalysisPage() {
             'KEY TAKEAWAYS': { icon: 'lightbulb', color: 'text-amber-500', label: 'Key Takeaways' },
         }
 
-        // Try to parse sections
-        const sectionRegex = /\*\*([A-Z\s]+):\*\*\s*/g
-        const sections: Array<{ header: string; content: string }> = []
+        // Updated regex to capture page numbers: **HEADER:** [p.1, 2]
+        // Match pattern: **HEADER:** or **HEADER:** [p.X, Y]
+        const sectionRegex = /\*\*([A-Z\s]+):\*\*(?:\s*\[p\.([0-9,\s]+)\])?\s*/g
+        const sections: Array<{ header: string; content: string; pages?: string }> = []
         let match
 
         // Clone regex for exec
         const regex = new RegExp(sectionRegex)
-        const matches: Array<{ header: string; start: number; end: number }> = []
+        const matches: Array<{ header: string; pages?: string; start: number; end: number }> = []
 
         while ((match = regex.exec(text)) !== null) {
             matches.push({
                 header: match[1].trim(),
+                pages: match[2]?.trim(), // Page numbers if present
                 start: match.index,
                 end: match.index + match[0].length
             })
@@ -273,7 +275,11 @@ export function AnalysisPage() {
             const contentStart = matches[i].end
             const contentEnd = i < matches.length - 1 ? matches[i + 1].start : text.length
             const content = text.substring(contentStart, contentEnd).trim()
-            sections.push({ header: matches[i].header, content })
+            sections.push({
+                header: matches[i].header,
+                content,
+                pages: matches[i].pages
+            })
         }
 
         return (
@@ -293,6 +299,13 @@ export function AnalysisPage() {
                                 <h5 className={`text-sm font-bold uppercase tracking-wide ${config.color}`}>
                                     {config.label}
                                 </h5>
+                                {/* Page number chip */}
+                                {section.pages && (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-primary/10 text-primary text-[10px] font-medium rounded-full ml-auto">
+                                        <span className="material-symbols-outlined text-xs">menu_book</span>
+                                        p.{section.pages}
+                                    </span>
+                                )}
                             </div>
                             <p className="text-base leading-relaxed pl-7 border-l-2 border-[var(--border)] ml-2">
                                 {section.content}
@@ -654,8 +667,41 @@ export function AnalysisPage() {
 
                     {/* Right Column - Summary & Analysis */}
                     <div className="lg:col-span-2 space-y-6">
-                        {/* No Summary - Generate Button or Disabled Message */}
-                        {!summary || summary.processing_status === 'pending' || summary.processing_status === 'failed' ? (
+                        {/* Processing Overlay - Shows while AI is working */}
+                        {summary?.processing_status === 'processing' ? (
+                            <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm p-8">
+                                <div className="flex flex-col items-center justify-center text-center py-8">
+                                    {/* Animated processing indicator */}
+                                    <div className="relative w-20 h-20 mb-6">
+                                        <div className="absolute inset-0 rounded-full border-4 border-primary/20" />
+                                        <div className="absolute inset-0 rounded-full border-4 border-primary border-t-transparent animate-spin" />
+                                        <div className="absolute inset-3 bg-primary/10 rounded-full flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-2xl text-primary animate-pulse">auto_awesome</span>
+                                        </div>
+                                    </div>
+                                    <h3 className="text-xl font-bold mb-2">AI is Analyzing Your Document</h3>
+                                    <p className="text-[var(--muted-foreground)] mb-4 max-w-md">
+                                        Please wait while we process your PDF and generate summaries, keywords, and study questions.
+                                        This may take up to 30 seconds for larger documents.
+                                    </p>
+                                    {/* Progress steps */}
+                                    <div className="flex items-center gap-6 text-sm text-[var(--muted-foreground)]">
+                                        <div className="flex items-center gap-2">
+                                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                            <span>Reading PDF</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+                                            <span className="text-primary font-medium">Analyzing content</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="w-2 h-2 rounded-full bg-[var(--muted)]"></span>
+                                            <span>Generating summary</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : !summary || summary.processing_status === 'pending' || summary.processing_status === 'failed' ? (
                             <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] shadow-sm p-8 text-center">
                                 {/* Check if summary feature is disabled by admin */}
                                 {!isSummaryEnabled ? (
@@ -788,8 +834,11 @@ export function AnalysisPage() {
                                                 {(getCurrentSummaryContent() as string[]).map((point, i) => {
                                                     // Find citation for this bullet point
                                                     const citation = summary.citations && Array.isArray(summary.citations)
-                                                        ? (summary.citations as { claim: string; sourceQuote: string; verified: boolean }[]).find(c => c.claim === point)
+                                                        ? (summary.citations as { claim: string; sourceQuote: string; verified: boolean; section?: number }[]).find(c => c.claim === point)
                                                         : null
+
+                                                    // Check if this is a page number citation (starts with "Page")
+                                                    const isPageCitation = citation?.sourceQuote?.startsWith('Page')
 
                                                     return (
                                                         <li key={i} className="p-3 bg-[var(--muted)]/30 rounded-lg border border-transparent hover:border-primary/20 transition-colors">
@@ -798,18 +847,29 @@ export function AnalysisPage() {
                                                                 <div className="flex-1">
                                                                     <span className="text-base leading-relaxed block">{point}</span>
                                                                     {citation && citation.sourceQuote && (
-                                                                        <details className="mt-2 group">
-                                                                            <summary className="cursor-pointer text-xs text-primary hover:underline flex items-center gap-1">
-                                                                                <span className="material-symbols-outlined text-sm">
-                                                                                    {citation.verified ? 'verified' : 'help'}
+                                                                        <div className="mt-2 flex items-center gap-2">
+                                                                            {isPageCitation ? (
+                                                                                // Page number citation - show as badge
+                                                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary text-xs font-medium rounded-full">
+                                                                                    <span className="material-symbols-outlined text-sm">menu_book</span>
+                                                                                    {citation.sourceQuote}
                                                                                 </span>
-                                                                                <span>{citation.verified ? 'View source' : 'Source (unverified)'}</span>
-                                                                                <span className="material-symbols-outlined text-xs group-open:rotate-180 transition-transform">expand_more</span>
-                                                                            </summary>
-                                                                            <blockquote className={`mt-2 pl-3 border-l-2 text-sm italic text-[var(--muted-foreground)] ${citation.verified ? 'border-emerald-500' : 'border-amber-500'}`}>
-                                                                                "{citation.sourceQuote}"
-                                                                            </blockquote>
-                                                                        </details>
+                                                                            ) : (
+                                                                                // Text quote citation - show expandable
+                                                                                <details className="group">
+                                                                                    <summary className="cursor-pointer text-xs text-primary hover:underline flex items-center gap-1">
+                                                                                        <span className="material-symbols-outlined text-sm">
+                                                                                            {citation.verified ? 'verified' : 'help'}
+                                                                                        </span>
+                                                                                        <span>{citation.verified ? 'View source' : 'Source (unverified)'}</span>
+                                                                                        <span className="material-symbols-outlined text-xs group-open:rotate-180 transition-transform">expand_more</span>
+                                                                                    </summary>
+                                                                                    <blockquote className={`mt-2 pl-3 border-l-2 text-sm italic text-[var(--muted-foreground)] ${citation.verified ? 'border-emerald-500' : 'border-amber-500'}`}>
+                                                                                        "{citation.sourceQuote}"
+                                                                                    </blockquote>
+                                                                                </details>
+                                                                            )}
+                                                                        </div>
                                                                     )}
                                                                 </div>
                                                             </div>
