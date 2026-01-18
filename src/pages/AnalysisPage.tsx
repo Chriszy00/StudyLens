@@ -487,6 +487,51 @@ export function AnalysisPage() {
 
     return (
         <PageWrapper>
+            {/* Full-Screen Processing Overlay - Blocks all interaction while AI is analyzing */}
+            {isProcessing && (
+                <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-300">
+                    <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-2xl p-8 mx-4 max-w-md w-full text-center">
+                        {/* Animated processing indicator */}
+                        <div className="relative w-24 h-24 mx-auto mb-6">
+                            <div className="absolute inset-0 rounded-full border-4 border-primary/20" />
+                            <div className="absolute inset-0 rounded-full border-4 border-primary border-t-transparent animate-spin" />
+                            <div className="absolute inset-4 bg-primary/10 rounded-full flex items-center justify-center">
+                                <span className="material-symbols-outlined text-3xl text-primary animate-pulse">auto_awesome</span>
+                            </div>
+                        </div>
+
+                        <h3 className="text-2xl font-bold mb-3">AI is Analyzing Your Document</h3>
+                        <p className="text-[var(--muted-foreground)] mb-6">
+                            Please wait while we process your document and generate summaries, keywords, and study questions.
+                            This may take up to 30 seconds for larger documents.
+                        </p>
+
+                        {/* Progress steps */}
+                        <div className="space-y-3 text-left bg-[var(--muted)]/30 rounded-xl p-4 mb-4">
+                            <div className="flex items-center gap-3">
+                                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                                <span className="text-sm">Reading document content</span>
+                                <span className="material-symbols-outlined text-emerald-500 text-sm ml-auto">check_circle</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <span className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse shrink-0" />
+                                <span className="text-sm text-primary font-medium">Analyzing with AI...</span>
+                                <span className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin ml-auto" />
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <span className="w-2.5 h-2.5 rounded-full bg-[var(--muted)] shrink-0" />
+                                <span className="text-sm text-[var(--muted-foreground)]">Generating summary & questions</span>
+                            </div>
+                        </div>
+
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                            <span className="material-symbols-outlined text-xs align-middle mr-1">info</span>
+                            Please do not close or refresh this page
+                        </p>
+                    </div>
+                </div>
+            )}
+
             <Header
                 title={documentTitle}
                 showBack
