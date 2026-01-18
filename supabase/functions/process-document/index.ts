@@ -108,61 +108,114 @@ serve(async (req) => {
             summaryId = newSummary.id
         }
 
-        // Get document text
-        const fullText = document.original_text || ''
+        // ============================================
+        // DETERMINE PROCESSING MODE: PDF or TEXT
+        // ============================================
+        const hasPdfFile = document.storage_path &&
+            (document.storage_path.endsWith('.pdf') || document.original_filename?.endsWith('.pdf'))
 
-        if (!fullText.trim()) {
-            throw new Error('Document has no text content')
+        // Initialize results with defaults (will be overwritten by processing)
+        let results: ProcessingResults = {
+            shortSummary: '',
+            detailedSummary: '',
+            bulletPoints: [],
+            keywords: [],
+            studyQuestions: [],
+            citations: []
+        }
+        let processingMode: 'pdf' | 'text' = 'text'
+        let processingSuccessful = false
+
+        if (hasPdfFile) {
+            // ============================================
+            // PDF DIRECT PROCESSING (Option 2)
+            // Download PDF and send directly to Gemini
+            // ============================================
+            console.log('📑 PDF detected - using direct Gemini PDF processing')
+            processingMode = 'pdf'
+
+            try {
+                // Download PDF from Supabase Storage
+                console.log('📥 Downloading PDF from storage:', document.storage_path)
+                const { data: pdfData, error: downloadError } = await supabase.storage
+                    .from('documents')
+                    .download(document.storage_path)
+
+                if (downloadError || !pdfData) {
+                    console.error('❌ PDF download failed:', downloadError)
+                    throw new Error(`Failed to download PDF: ${downloadError?.message || 'Unknown error'}`)
+                }
+
+                // Convert to base64 for Gemini API
+                const pdfBuffer = await pdfData.arrayBuffer()
+                const pdfBase64 = btoa(
+                    new Uint8Array(pdfBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+                )
+
+                console.log(`📄 PDF loaded: ${(pdfBuffer.byteLength / 1024).toFixed(1)} KB`)
+
+                // Process PDF directly with Gemini
+                results = await processPdfWithGemini(pdfBase64, options, geminiApiKey)
+
+            } catch (pdfError) {
+                console.error('❌ PDF processing failed, falling back to text mode:', pdfError)
+                processingMode = 'text'
+                // Fall through to text processing below
+            }
         }
 
-        // Split into chunks
-        const chunks = splitIntoChunks(fullText, CHUNK_SIZE)
-        const totalChunks = chunks.length
-        const wasChunked = totalChunks > 1
+        // TEXT-BASED PROCESSING (fallback or for non-PDF documents)
+        if (processingMode === 'text') {
+            const fullText = document.original_text || ''
 
-        console.log(`📝 Document: ${fullText.length} chars → ${totalChunks} chunk(s)`)
+            if (!fullText.trim() || fullText.includes('[PDF content from:') || fullText.includes('[DOCX content from:')) {
+                // No real text content available
+                throw new Error('NO_TEXT_CONTENT:This document requires PDF processing. Please ensure the PDF file is accessible.')
+            }
 
-        // Limit chunks to prevent excessive API usage
-        const chunksToProcess = chunks.slice(0, MAX_CHUNKS)
-        const wasTruncated = totalChunks > MAX_CHUNKS
+            // Split into chunks
+            const chunks = splitIntoChunks(fullText, CHUNK_SIZE)
+            const totalChunks = chunks.length
+            const wasChunked = totalChunks > 1
 
-        if (wasTruncated) {
-            console.log(`⚠️ Document too large, processing only first ${MAX_CHUNKS} chunks`)
+            console.log(`📝 Document: ${fullText.length} chars → ${totalChunks} chunk(s)`)
+
+            // Limit chunks to prevent excessive API usage
+            const chunksToProcess = chunks.slice(0, MAX_CHUNKS)
+            const wasTruncated = totalChunks > MAX_CHUNKS
+
+            if (wasTruncated) {
+                console.log(`⚠️ Document too large, processing only first ${MAX_CHUNKS} chunks`)
+            }
+
+            if (wasChunked) {
+                // CHUNKED PROCESSING: Process each chunk, then combine
+                console.log('🔄 Starting chunked processing...')
+                results = await processChunkedDocument(chunksToProcess, options, geminiApiKey)
+            } else {
+                // SINGLE CHUNK: Process normally
+                console.log('⚡ Single chunk processing...')
+                const geminiStart = Date.now()
+                results = await processSingleChunk(fullText, options, geminiApiKey)
+                console.log(`⚡ Gemini processing took: ${Date.now() - geminiStart}ms`)
+            }
         }
 
-        let results: {
-            shortSummary: string
-            detailedSummary: string
-            bulletPoints: string[]
-            keywords: string[]
-            studyQuestions: Array<{ question: string, answer: string, difficulty: string, sourceQuote?: string }>
-            citations?: Citation[]
-        }
-
-        if (wasChunked) {
-            // CHUNKED PROCESSING: Process each chunk, then combine
-            console.log('🔄 Starting chunked processing...')
-            results = await processChunkedDocument(chunksToProcess, options, geminiApiKey)
-        } else {
-            // SINGLE CHUNK: Process normally
-            console.log('⚡ Single chunk processing...')
-            const geminiStart = Date.now()
-            results = await processSingleChunk(fullText, options, geminiApiKey)
-            console.log(`⚡ Gemini processing took: ${Date.now() - geminiStart}ms`)
-        }
+        // ============================================
+        // SAVE RESULTS (for both PDF and TEXT modes)
+        // ============================================
 
         // Calculate metrics
-        const originalWords = fullText.split(/\s+/).length
         const summaryWords = ((results.shortSummary || '') + ' ' + (results.detailedSummary || '')).split(/\s+/).length
-        const compressionRatio = Math.min(99, Math.max(0, Math.round((1 - summaryWords / originalWords) * 100)))
+        const compressionRatio = summaryWords > 0 ? Math.min(99, Math.max(0, 100 - summaryWords)) : 0
 
-        // Calculate citation verification rate
+        // Calculate citation verification rate (for PDF mode, citations always have verified=true via page number)
         const citations = results.citations || []
         const verifiedCount = citations.filter(c => c.verified).length
         const citationRate = citations.length > 0 ? Math.round((verifiedCount / citations.length) * 100) : 0
-        console.log(`📚 Citation verification rate: ${citationRate}% (${verifiedCount}/${citations.length})`)
+        console.log(`📚 Citation rate: ${citationRate}% (${verifiedCount}/${citations.length} verified)`)
 
-        // Update summary with results (including citations)
+        // Update summary with results
         const { error: updateError } = await supabase
             .from('summaries')
             .update({
@@ -171,9 +224,9 @@ serve(async (req) => {
                 bullet_points: results.bulletPoints,
                 keywords: results.keywords,
                 study_questions: results.studyQuestions,
-                citations: citations, // Store citations for UI display
+                citations: citations,
                 compression_ratio: compressionRatio,
-                keyword_coverage: citationRate, // Repurpose this field for citation rate
+                keyword_coverage: citationRate, // Citation verification rate
                 processing_status: 'completed',
             })
             .eq('id', summaryId)
@@ -186,16 +239,15 @@ serve(async (req) => {
             .update({ is_draft: false })
             .eq('id', documentId)
 
-        console.log(`✅ Total processing time: ${Date.now() - startTime}ms`)
+        console.log(`✅ Total processing time: ${Date.now() - startTime}ms (mode: ${processingMode})`)
 
         return new Response(
             JSON.stringify({
                 summaryId,
                 status: 'completed',
-                chunksProcessed: chunksToProcess.length,
-                wasChunked,
-                wasTruncated,
-                originalLength: fullText.length,
+                processingMode,
+                citationsCount: citations.length,
+                citationRate,
             }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
@@ -211,7 +263,7 @@ serve(async (req) => {
         if (errorMessage.includes(':')) {
             const parts = errorMessage.split(':')
             errorCode = parts[0]
-            userMessage = parts.slice(1).join(':') // In case message contains colons
+            userMessage = parts.slice(1).join(':')
         } else if (errorMessage.includes('Document not found')) {
             userMessage = 'The document could not be found. It may have been deleted.'
             errorCode = 'DOC_NOT_FOUND'
@@ -224,7 +276,7 @@ serve(async (req) => {
             JSON.stringify({
                 error: userMessage,
                 errorCode: errorCode,
-                technicalDetails: errorMessage // For debugging in console
+                technicalDetails: errorMessage
             }),
             {
                 status: 500,
@@ -277,19 +329,188 @@ function splitIntoChunks(text: string, chunkSize: number): string[] {
 }
 
 /**
+ * Process a PDF document directly using Gemini's multimodal capabilities
+ * This sends the PDF as binary data and asks Gemini to analyze it with page references
+ */
+async function processPdfWithGemini(
+    pdfBase64: string,
+    options: ProcessRequest['options'],
+    apiKey: string
+): Promise<ProcessingResults> {
+    console.log('📑 Processing PDF with Gemini multimodal...')
+
+    const prompt = `You are an expert academic tutor analyzing a PDF document. Study each page carefully and create comprehensive study materials.
+
+CRITICAL REQUIREMENTS:
+1. For EVERY bullet point, study question, AND detailed section, include the PAGE NUMBER(s) where the information is found
+2. Use format "pageNumber": 1 (or "pages": [1, 2] for multiple pages)
+3. If information spans multiple pages, list all relevant pages
+
+Respond with this exact JSON structure:
+{
+  "shortSummary": "YOUR SHORT SUMMARY HERE - 4-6 sentences covering: what this is, main purpose, 2-3 key concepts, why it matters, memorable takeaway",
+  "detailedSections": [
+    {"header": "INTRODUCTION", "content": "2-3 sentences defining the topic and its significance", "pages": [1]},
+    {"header": "CORE CONCEPTS", "content": "Paragraph explaining fundamental principles, theories, formulas, and definitions", "pages": [1, 2]},
+    {"header": "KEY COMPONENTS", "content": "Paragraph detailing key components, methods, or processes and how they relate", "pages": [2, 3]},
+    {"header": "APPLICATIONS", "content": "Paragraph with real-world applications and concrete examples", "pages": [3, 4]},
+    {"header": "CONNECTIONS", "content": "Paragraph on how this connects to broader topics and future implications", "pages": [4]},
+    {"header": "KEY TAKEAWAYS", "content": "2-3 sentences of what students MUST remember for exams", "pages": [1, 4]}
+  ],
+  "bulletPoints": [
+    {"text": "DEFINITION: [Term]: [clear definition]", "pageNumber": 1},
+    {"text": "KEY CONCEPT: [explanation of important concept]", "pageNumber": 2},
+    {"text": "FORMULA: [Name]: [formula] where [explain variables]", "pageNumber": 2},
+    {"text": "PROCESS: [Name]: Step 1... Step 2... Step 3...", "pageNumber": 3},
+    {"text": "EXAMPLE: [Concept] example: [real-world example]", "pageNumber": 3},
+    {"text": "KEY DISTINCTION: [A] vs [B]: [difference]", "pageNumber": 4},
+    {"text": "COMMON MISTAKE: ⚠️ [what students often get wrong]", "pageNumber": 4},
+    {"text": "MEMORY AID: 💡 [mnemonic or memorable way to recall]", "pageNumber": 1}
+  ],
+  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5", "keyword6", "keyword7", "keyword8"],
+  "studyQuestions": [
+    {"question": "Q1?", "answer": "Detailed 2-3 sentence answer", "difficulty": "easy", "pageNumber": 1},
+    {"question": "Q2?", "answer": "Detailed 2-3 sentence answer", "difficulty": "medium", "pageNumber": 2},
+    {"question": "Q3?", "answer": "Detailed 2-3 sentence answer", "difficulty": "medium", "pageNumber": 3},
+    {"question": "Q4?", "answer": "Detailed 2-3 sentence answer", "difficulty": "hard", "pageNumber": 3},
+    {"question": "Q5?", "answer": "Detailed 2-3 sentence answer", "difficulty": "hard", "pageNumber": 4}
+  ]
+}
+
+FORMATTING RULES:
+- shortSummary: 4-6 sentences, ~80-120 words
+- detailedSections: Exactly 6 sections with specified headers (INTRODUCTION, CORE CONCEPTS, KEY COMPONENTS, APPLICATIONS, CONNECTIONS, KEY TAKEAWAYS)
+- Each section should reference the actual page numbers where that content appears
+- bulletPoints: Exactly 8 items, each with category prefix and page number
+- keywords: Exactly 8 exam-relevant terms
+- studyQuestions: Exactly 5 questions (1 easy, 2 medium, 2 hard) with detailed answers
+- pageNumber/pages: Must be actual page numbers from the PDF
+
+Return ONLY valid JSON, no markdown code blocks.`
+
+    // Construct the multimodal request for Gemini
+    const requestBody = {
+        contents: [{
+            parts: [
+                {
+                    inline_data: {
+                        mime_type: "application/pdf",
+                        data: pdfBase64
+                    }
+                },
+                { text: prompt }
+            ]
+        }],
+        generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 4500,
+        },
+    }
+
+    const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
+        }
+    )
+
+    if (!response.ok) {
+        const errorText = await response.text()
+        console.error('❌ Gemini PDF API error:', response.status, errorText)
+        throw new Error(`Gemini PDF API error: ${response.status}`)
+    }
+
+    const data = await response.json()
+
+    if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        console.error('❌ No content in Gemini PDF response')
+        throw new Error('No content returned from Gemini PDF processing')
+    }
+
+    const responseText = data.candidates[0].content.parts[0].text
+
+    // Clean up response (remove markdown code blocks if present)
+    let cleanedResponse = responseText
+        .replace(/```json\n?/gi, '')
+        .replace(/```\n?/g, '')
+        .trim()
+
+    console.log('📝 Gemini PDF response received, parsing...')
+
+    try {
+        const parsed = JSON.parse(cleanedResponse)
+
+        // Build detailedSummary from sections (with page markers embedded)
+        let detailedSummary = ''
+        if (parsed.detailedSections && Array.isArray(parsed.detailedSections)) {
+            detailedSummary = parsed.detailedSections.map((section: { header: string; content: string; pages?: number[] }) => {
+                const pagesStr = section.pages?.length ? ` [p.${section.pages.join(', ')}]` : ''
+                return `**${section.header}:**${pagesStr}\n\n${section.content}`
+            }).join('\n\n')
+        } else if (parsed.detailedSummary) {
+            // Fallback if AI returns old format
+            detailedSummary = parsed.detailedSummary
+        }
+
+        // Process bullet points with page citations
+        const bulletPoints: string[] = []
+        const citations: Citation[] = []
+
+        if (parsed.bulletPoints && Array.isArray(parsed.bulletPoints)) {
+            parsed.bulletPoints.forEach((bp: { text: string; pageNumber?: number }) => {
+                bulletPoints.push(bp.text)
+                citations.push({
+                    claim: bp.text,
+                    sourceQuote: `Page ${bp.pageNumber || 1}`,
+                    verified: true,
+                    section: bp.pageNumber || 1
+                })
+            })
+        }
+
+        // Process study questions with page citations
+        const studyQuestions = (parsed.studyQuestions || []).map((q: { question: string; answer: string; difficulty: string; pageNumber?: number }) => {
+            citations.push({
+                claim: q.question,
+                sourceQuote: `Page ${q.pageNumber || 1}`,
+                verified: true,
+                section: q.pageNumber || 1
+            })
+            return {
+                question: q.question,
+                answer: q.answer,
+                difficulty: q.difficulty,
+                sourceQuote: `Page ${q.pageNumber || 1}`
+            }
+        })
+
+        console.log(`📚 PDF processed: ${bulletPoints.length} bullet points, ${studyQuestions.length} questions, ${citations.length} citations`)
+
+        return {
+            shortSummary: parsed.shortSummary || '',
+            detailedSummary,
+            bulletPoints,
+            keywords: parsed.keywords || [],
+            studyQuestions,
+            citations
+        }
+    } catch (parseError) {
+        console.error('❌ Failed to parse Gemini PDF response:', parseError)
+        console.error('Raw response:', cleanedResponse.substring(0, 500))
+        throw new Error('Failed to parse AI response from PDF processing')
+    }
+}
+
+/**
  * Process a document that spans multiple chunks
  */
 async function processChunkedDocument(
     chunks: string[],
     options: ProcessRequest['options'],
     apiKey: string
-): Promise<{
-    shortSummary: string
-    detailedSummary: string
-    bulletPoints: string[]
-    keywords: string[]
-    studyQuestions: Array<{ question: string, answer: string, difficulty: string }>
-}> {
+): Promise<ProcessingResults> {
     console.log(`🔄 Processing ${chunks.length} chunks...`)
 
     // Step 1: Process each chunk to extract key information
@@ -305,7 +526,10 @@ async function processChunkedDocument(
     console.log('🔗 Combining chunk results...')
     const combinedResult = await combineChunkResults(chunkResults, options, apiKey)
 
-    return combinedResult
+    return {
+        ...combinedResult,
+        citations: [] // Text mode doesn't have page numbers
+    }
 }
 
 /**

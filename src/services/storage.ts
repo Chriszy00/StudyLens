@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { ensureValidSession, isAuthError, refreshSession, clearSessionCache } from '@/lib/sessionManager'
 
 const BUCKET_NAME = 'documents'
 
@@ -39,40 +40,81 @@ let cachedUserId: string | null = null
 let cacheTimestamp: number = 0
 const CACHE_DURATION_MS = 30000 // 30 seconds
 
+// Track if we've seen the initial auth event (to distinguish initial state from actual changes)
+let hasReceivedInitialAuthEvent = false
+
 // Listen for auth changes to invalidate cache
-supabase.auth.onAuthStateChange((event) => {
-    if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+supabase.auth.onAuthStateChange((event, session) => {
+    // The first event is the initial state, not an actual change
+    // We don't want to clear caches on the initial state
+    if (!hasReceivedInitialAuthEvent) {
+        hasReceivedInitialAuthEvent = true
+        console.log('🔐 [Storage] Initial auth state:', event, session ? 'has session' : 'no session')
+        // On initial load, populate the cache from the session if available
+        if (session?.user) {
+            cachedUserId = session.user.id
+            cacheTimestamp = Date.now()
+        }
+        return // Don't clear anything on initial state
+    }
+    
+    // This is an actual state change
+    console.log('🔐 [Storage] Auth state changed:', event)
+    
+    if (event === 'SIGNED_OUT') {
+        // Only clear everything on sign out
         cachedUserId = null
         cacheTimestamp = 0
+        clearSessionCache()
+    } else if (event === 'TOKEN_REFRESHED') {
+        // On token refresh, just clear the user cache but NOT the session cache
+        // The session manager will update its cache with the new token
+        cachedUserId = null
+        cacheTimestamp = 0
+    } else if (event === 'SIGNED_IN') {
+        // On actual sign in (not initial state), update user cache
+        if (session?.user) {
+            cachedUserId = session.user.id
+            cacheTimestamp = Date.now()
+        }
+        // DON'T clear session cache - we want to keep the fresh session!
     }
 })
 
 /**
- * Get the current user ID with caching
+ * Get the current user ID with session validation
+ * 
+ * IMPORTANT: This now uses ensureValidSession() which will:
+ * 1. Check if the current token is valid
+ * 2. Proactively refresh if token is about to expire (within 5 min buffer)
+ * 3. Attempt refresh if token is already expired
+ * 
+ * This fixes the "infinite loading after idle" issue caused by expired JWTs.
  */
 async function getCurrentUserId(): Promise<string> {
     const now = Date.now()
 
-    // Use cached value if still valid
+    // Use cached value if still valid (short cache for performance)
     if (cachedUserId && (now - cacheTimestamp) < CACHE_DURATION_MS) {
+        // Even with cache, we should validate session hasn't expired
+        // But we only do full validation every 30 seconds for performance
         return cachedUserId
     }
 
-    // Get fresh session
-    const { data: { session }, error } = await supabase.auth.getSession()
-
-    if (error) {
-        console.error('Auth error:', error)
-        throw new Error('Authentication error')
-    }
+    // Use ensureValidSession instead of plain getSession
+    // This handles token refresh automatically if needed
+    console.log('🔐 [Storage] Validating session before operation...')
+    const session = await ensureValidSession()
 
     if (!session?.user) {
-        throw new Error('Not authenticated')
+        console.error('❌ [Storage] No valid session after validation')
+        throw new Error('Not authenticated. Please sign in again.')
     }
 
     // Cache the result
     cachedUserId = session.user.id
     cacheTimestamp = now
+    console.log('✅ [Storage] Session validated, user:', cachedUserId.substring(0, 8) + '...')
 
     return cachedUserId
 }
@@ -601,6 +643,21 @@ export async function uploadFileWithProgress(file: File, options: UploadOptions 
                 // Check for cancellation
                 if (abortSignal?.aborted || error.message === 'Upload cancelled') {
                     throw new Error('Upload cancelled')
+                }
+
+                // Check for auth errors - refresh session and retry
+                if (isAuthError(error) && attempt < MAX_RETRIES) {
+                    console.log('🔐 [Storage] Auth error detected, refreshing session before retry...')
+                    const newSession = await refreshSession()
+                    if (!newSession) {
+                        throw new Error('Session expired. Please sign in again.')
+                    }
+                    // Update cached user ID with refreshed session
+                    cachedUserId = newSession.user.id
+                    cacheTimestamp = Date.now()
+                    console.log('✅ [Storage] Session refreshed, retrying upload...')
+                    // Continue to next iteration (retry)
+                    continue
                 }
 
                 // If it's a timeout or network error, we retry. 

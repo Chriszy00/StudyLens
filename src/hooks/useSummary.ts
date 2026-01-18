@@ -42,9 +42,10 @@ export function useSummary(documentId: string | null | undefined) {
 
     return useQuery({
         queryKey: summaryKeys.detail(documentId || ''),
-        queryFn: async () => {
+        queryFn: async ({ signal }) => {
             console.log('🔍 [useSummary] queryFn EXECUTING for documentId:', documentId)
-            const result = await getSummary(documentId!)
+            // FIX: Pass the abort signal to getSummary
+            const result = await getSummary(documentId!, signal)
             console.log('🔍 [useSummary] queryFn RESULT:', result ? `Got summary (status: ${result.processing_status})` : 'No summary')
             return result
         },
@@ -90,6 +91,9 @@ export function useSummary(documentId: string | null | undefined) {
 /**
  * Trigger AI processing for a document with configurable options
  * After mutation, the summary query will start polling for results
+ * 
+ * OPTIMISTIC UPDATE: When we start processing, immediately set status to 'processing'
+ * in the cache. This ensures the polling starts right away, and the UI shows a loading state.
  */
 export function useProcessDocument() {
     const queryClient = useQueryClient()
@@ -104,16 +108,48 @@ export function useProcessDocument() {
         }) => processDocument(documentId, options),
 
         onMutate: async ({ documentId }) => {
-            // Cancel any outgoing refetches so they don't overwrite optimistic update
+            console.log('🔄 [useProcessDocument] Starting mutation, setting optimistic processing state')
+
+            // Cancel any outgoing refetches so they don't overwrite our optimistic update
             await queryClient.cancelQueries({
                 queryKey: summaryKeys.detail(documentId)
             })
+
+            // Snapshot the previous value
+            const previousSummary = queryClient.getQueryData(summaryKeys.detail(documentId))
+
+            // OPTIMISTIC UPDATE: Set status to 'processing' immediately
+            // This ensures the refetchInterval sees 'processing' and starts polling!
+            queryClient.setQueryData(summaryKeys.detail(documentId), (old: unknown) => {
+                if (old && typeof old === 'object') {
+                    return {
+                        ...old,
+                        processing_status: 'processing',
+                        error_message: null
+                    }
+                }
+                // If no previous data, create a minimal processing stub
+                return {
+                    processing_status: 'processing',
+                    short_summary: null,
+                    detailed_summary: null,
+                    bullet_points: null,
+                    keywords: null,
+                    study_questions: null,
+                    citations: null,
+                }
+            })
+
+            // Return context for rollback
+            return { previousSummary }
         },
 
         onSuccess: (_data, { documentId }) => {
-            console.log('✅ [useProcessDocument] Mutation succeeded, invalidating cache')
+            console.log('✅ [useProcessDocument] Mutation succeeded - polling will continue until status changes')
 
-            // Invalidate and immediately refetch to show new data
+            // Don't set cache to 'completed' here!
+            // The edge function is still processing. The polling will pick up the real status.
+            // Just invalidate to trigger a fresh fetch
             queryClient.invalidateQueries({
                 queryKey: summaryKeys.detail(documentId)
             })
@@ -124,8 +160,13 @@ export function useProcessDocument() {
             })
         },
 
-        onError: (error) => {
+        onError: (error, { documentId }, context) => {
             console.error('❌ [useProcessDocument] Mutation failed:', error)
+
+            // Rollback to previous state on error
+            if (context?.previousSummary) {
+                queryClient.setQueryData(summaryKeys.detail(documentId), context.previousSummary)
+            }
         }
     })
 }

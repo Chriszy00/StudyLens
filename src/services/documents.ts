@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { ensureValidSession, getValidSession, isAuthError, warmUpConnection } from '@/lib/sessionManager'
 import type { Database } from '@/lib/database.types'
 
 type Document = Database['public']['Tables']['documents']['Row']
@@ -29,109 +30,251 @@ supabase.auth.onAuthStateChange((event) => {
 })
 
 /**
- * Get the current user ID with caching
+ * Get the current user ID with session validation
  */
 async function getCurrentUserId(): Promise<string> {
     const now = Date.now()
 
-    // Use cached value if still valid
     if (cachedUserId && (now - cacheTimestamp) < CACHE_DURATION_MS) {
         return cachedUserId
     }
 
-    // Get fresh session
-    const { data: { session }, error } = await supabase.auth.getSession()
-
-    if (error) {
-        console.error('Auth error:', error)
-        throw new Error('Authentication error')
-    }
+    console.log('📚 [Documents] Validating session...')
+    const session = await ensureValidSession()
 
     if (!session?.user) {
-        throw new Error('Not authenticated')
+        console.error('❌ [Documents] No valid session after validation')
+        throw new Error('Not authenticated. Please sign in again.')
     }
 
-    // Cache the result
     cachedUserId = session.user.id
     cacheTimestamp = now
+    console.log('✅ [Documents] Session validated')
 
     return cachedUserId
 }
 
 /**
- * Get all documents for the current user with optional filtering
+ * Lightweight session check for read operations
  */
-export async function getDocuments(filter: DocumentFilter = 'all'): Promise<DocumentWithMeta[]> {
-    let query = supabase
-        .from('documents')
-        .select('id, title, type, storage_path, created_at, updated_at, is_starred, is_draft, read_time_minutes, user_id')
-        .order('created_at', { ascending: false })
+function ensureReadSession(): void {
+    const session = getValidSession()
+    if (!session) {
+        throw new Error('Session expired. Please refresh the page.')
+    }
+}
 
-    switch (filter) {
-        case 'starred':
-            query = query.eq('is_starred', true)
-            break
-        case 'drafts':
-            query = query.eq('is_draft', true)
-            break
-        case 'recent':
-            // Last 7 days
-            const sevenDaysAgo = new Date()
-            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-            query = query.gte('created_at', sevenDaysAgo.toISOString())
-            break
+/**
+ * Get all documents for the current user with optional filtering
+ * 
+ * FIX v5: Uses AbortController to ACTUALLY cancel timed-out requests
+ * This prevents old requests from blocking new ones after returning from idle.
+ */
+export async function getDocuments(
+    filter: DocumentFilter = 'all',
+    signal?: AbortSignal  // Optional: pass React Query's abort signal
+): Promise<DocumentWithMeta[]> {
+    console.log(`📚 [getDocuments] Called with filter: "${filter}"`)
+    const startTime = Date.now()
+
+    // Validate session before making the query
+    try {
+        ensureReadSession()
+    } catch (sessionError) {
+        console.error('📚 [getDocuments] Session validation failed:', sessionError)
+        throw sessionError
     }
 
-    const { data, error } = await query
-
-    if (error) {
-        console.error('Error fetching documents:', error)
-        throw error
+    // If we already have an external abort signal and it's aborted, bail early
+    if (signal?.aborted) {
+        throw new Error('Request aborted')
     }
 
-    // Map to DocumentWithMeta and handle missing original_text
-    return (data || []).map(doc => ({
-        ...doc,
-        // Map back to expected properties if needed, or update interfaces
-        // The Document interface expects 'type' and 'storage_path' from database types
-        // But let's check if DocumentWithMeta expects 'file_type' or 'file_path'?
-        // DocumentWithMeta extends Document
-        // Database Document Row has: type, storage_path, original_text
-        // So we strictly follow the database schema now.
+    // Configuration
+    const QUERY_TIMEOUT_MS = 10000 // Reduced to 10 seconds (was 15)
+    const MAX_RETRIES = 2
 
-        // Ensure missing properties are handled if TS complains
-        original_text: null, // content not fetched
-        original_filename: null, // not fetched in list
-        tags: null, // not fetched in list
-        image_url: null, // not fetched in list
+    let lastError: Error | null = null
 
-        readTime: doc.read_time_minutes ? `${doc.read_time_minutes} min read` : 'Quick read',
-        formattedDate: formatDate(doc.created_at),
-    })) as unknown as DocumentWithMeta[]
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        // Create AbortController for THIS attempt
+        const abortController = new AbortController()
+        
+        // If external signal is provided, abort our controller when it aborts
+        const externalAbortHandler = () => abortController.abort()
+        signal?.addEventListener('abort', externalAbortHandler)
+        
+        // Set timeout to abort the request
+        const timeoutId = setTimeout(() => {
+            console.log(`📚 [getDocuments] Aborting query for "${filter}" after ${QUERY_TIMEOUT_MS}ms`)
+            abortController.abort()
+        }, QUERY_TIMEOUT_MS)
+
+        try {
+            // Build a FRESH query for each attempt (important!)
+            let query = supabase
+                .from('documents')
+                .select('id, title, type, storage_path, created_at, updated_at, is_starred, is_draft, read_time_minutes, user_id')
+                .order('created_at', { ascending: false })
+
+            switch (filter) {
+                case 'starred':
+                    console.log('📚 [getDocuments] Applying starred filter')
+                    query = query.eq('is_starred', true)
+                    break
+                case 'drafts':
+                    console.log('📚 [getDocuments] Applying drafts filter')
+                    query = query.eq('is_draft', true)
+                    break
+                case 'recent':
+                    const sevenDaysAgo = new Date()
+                    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+                    console.log('📚 [getDocuments] Applying recent filter (since:', sevenDaysAgo.toISOString(), ')')
+                    query = query.gte('created_at', sevenDaysAgo.toISOString())
+                    break
+                default:
+                    console.log('📚 [getDocuments] No filter applied (all documents)')
+            }
+
+            console.log('📚 [getDocuments] Executing Supabase query...')
+            
+            // Execute with abort signal
+            const { data, error } = await query.abortSignal(abortController.signal)
+            
+            // Clear timeout since we got a response
+            clearTimeout(timeoutId)
+            signal?.removeEventListener('abort', externalAbortHandler)
+
+            const elapsed = Date.now() - startTime
+            console.log(`📚 [getDocuments] Query completed in ${elapsed}ms`)
+
+            if (error) {
+                console.error(`📚 [getDocuments] ❌ Error for filter "${filter}":`, error)
+                
+                if (isAuthError(error) && attempt < MAX_RETRIES) {
+                    console.log('📚 [getDocuments] Auth error detected, refreshing session for retry...')
+                    const { refreshSession } = await import('@/lib/sessionManager')
+                    await refreshSession()
+                    continue
+                }
+                throw error
+            }
+
+            console.log(`📚 [getDocuments] ✅ Got ${data?.length || 0} documents for filter "${filter}"`)
+
+            return (data || []).map(doc => ({
+                ...doc,
+                original_text: null,
+                original_filename: null,
+                tags: null,
+                image_url: null,
+                readTime: doc.read_time_minutes ? `${doc.read_time_minutes} min read` : 'Quick read',
+                formattedDate: formatDate(doc.created_at),
+            })) as unknown as DocumentWithMeta[]
+
+        } catch (err) {
+            // Clean up
+            clearTimeout(timeoutId)
+            signal?.removeEventListener('abort', externalAbortHandler)
+            
+            const elapsed = Date.now() - startTime
+            const error = err as Error
+            lastError = error
+            
+            // Check if it was aborted
+            if (error.name === 'AbortError' || error.message.includes('aborted')) {
+                console.log(`📚 [getDocuments] Query aborted for "${filter}" after ${elapsed}ms (attempt ${attempt})`)
+                
+                // If it was a timeout abort (not external), warm up connection and retry
+                if (!signal?.aborted && attempt < MAX_RETRIES) {
+                    console.log('📚 [getDocuments] Timeout detected - warming up connection before retry...')
+                    await warmUpConnection()
+                    continue
+                }
+                
+                throw new Error(`Query for "${filter}" was cancelled`)
+            }
+            
+            console.error(`📚 [getDocuments] ❌ Exception after ${elapsed}ms (attempt ${attempt}):`, error.message)
+            
+            if (isAuthError(error) && attempt < MAX_RETRIES) {
+                console.log('📚 [getDocuments] Auth error detected, refreshing session for retry...')
+                const { refreshSession } = await import('@/lib/sessionManager')
+                await refreshSession()
+                continue
+            }
+            
+            if (attempt === MAX_RETRIES) {
+                throw error
+            }
+        }
+    }
+
+    throw lastError || new Error('getDocuments failed after retries')
 }
 
 /**
  * Get a single document by ID
  */
-export async function getDocument(id: string): Promise<Document | null> {
+export async function getDocument(id: string, signal?: AbortSignal): Promise<Document | null> {
     console.log('📄 [getDocument] Called with id:', id)
     const startTime = Date.now()
 
-    const { data, error } = await supabase
-        .from('documents')
-        .select('*')
-        .eq('id', id)
-        .single()
-
-    console.log('📄 [getDocument] Supabase query completed in', Date.now() - startTime, 'ms')
-
-    if (error) {
-        console.error('📄 [getDocument] Error:', error)
-        return null
+    try {
+        ensureReadSession()
+    } catch (sessionError) {
+        console.error('📄 [getDocument] Session validation failed:', sessionError)
+        throw sessionError
     }
 
-    console.log('📄 [getDocument] Returning document:', data?.title)
-    return data
+    // Create abort controller with timeout
+    const abortController = new AbortController()
+    const externalAbortHandler = () => abortController.abort()
+    signal?.addEventListener('abort', externalAbortHandler)
+    
+    const timeoutId = setTimeout(() => {
+        console.log('📄 [getDocument] Aborting query after 10s')
+        abortController.abort()
+    }, 10000)
+
+    try {
+        const { data, error } = await supabase
+            .from('documents')
+            .select('*')
+            .eq('id', id)
+            .single()
+            .abortSignal(abortController.signal)
+
+        clearTimeout(timeoutId)
+        signal?.removeEventListener('abort', externalAbortHandler)
+
+        console.log('📄 [getDocument] Supabase query completed in', Date.now() - startTime, 'ms')
+
+        if (error) {
+            console.error('📄 [getDocument] Error:', error)
+            
+            if (isAuthError(error)) {
+                throw new Error('Session expired. Please refresh the page.')
+            }
+            
+            return null
+        }
+
+        console.log('📄 [getDocument] Returning document:', data?.title)
+        return data
+    } catch (err) {
+        clearTimeout(timeoutId)
+        signal?.removeEventListener('abort', externalAbortHandler)
+        
+        const error = err as Error
+        if (error.name === 'AbortError' || error.message.includes('aborted')) {
+            // Timeout detected - trigger connection warm-up for next request
+            console.log('📄 [getDocument] Timeout detected - triggering connection warm-up...')
+            warmUpConnection().catch(() => {}) // Fire and forget
+            throw new Error('Document fetch was cancelled')
+        }
+        throw error
+    }
 }
 
 /**

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react'
 import type { User, Session, AuthError } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
+import { setupVisibilityRefresh, clearSessionCache, setSessionCache } from '@/lib/sessionManager'
 
 // ============================================
 // CONSTANTS
@@ -154,6 +155,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     setUser(cachedUser)
                     setStatus('authenticated')
                     setLoading(false)
+                    // Pre-populate session manager cache IMMEDIATELY so queries work
+                    setSessionCache(cachedSession)
                 }
             }
 
@@ -186,6 +189,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.log('🔐 [AuthContext] ✅ Session verified:', freshSession ? 'authenticated' : 'unauthenticated')
             setSession(freshSession)
             setUser(freshSession?.user ?? null)
+            
+            // Pre-populate session manager cache so queries don't need to call getSession()
+            if (freshSession) {
+                setSessionCache(freshSession)
+            }
             setStatus(freshSession ? 'authenticated' : 'unauthenticated')
             setError(null)
             setLoading(false)
@@ -202,6 +210,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 setStatus(session ? 'authenticated' : 'unauthenticated')
                 setError(null)
                 setLoading(false)
+                
+                // Pre-populate session manager cache so queries work immediately
+                if (session) {
+                    setSessionCache(session)
+                }
 
                 // Create profile on sign up
                 if (event === 'SIGNED_IN' && session?.user) {
@@ -223,13 +236,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 // Clear status on sign out
                 if (event === 'SIGNED_OUT') {
                     setStatus('unauthenticated')
+                    clearSessionCache()
                 }
             }
         )
 
+        // RE-ENABLED: Visibility refresh now uses a safer lightweight session check
+        // that won't cause concurrent request deadlocks
+        const cleanupVisibility = setupVisibilityRefresh()
+        
+        // Listen for session-expired events dispatched by sessionManager
+        const handleSessionExpired = () => {
+            console.log('🔐 [AuthContext] Session expired event received')
+            // Clear session cache and update state
+            clearSessionCache()
+            // The auth state change listener will handle the UI update
+        }
+        window.addEventListener('supabase:session-expired', handleSessionExpired)
+
         return () => {
             isMounted = false
             subscription.unsubscribe()
+            cleanupVisibility()
+            window.removeEventListener('supabase:session-expired', handleSessionExpired)
         }
     }, [])
 
@@ -267,6 +296,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const signOut = async () => {
         console.log('AuthContext: signOut initiated')
         try {
+            // Clear session manager cache first
+            clearSessionCache()
+            
             // Attempt to sign out from Supabase with a timeout
             // If the network call hangs, we don't want to block the user
             const { error } = await Promise.race([
