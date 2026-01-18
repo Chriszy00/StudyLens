@@ -99,11 +99,11 @@ export async function getDocuments(
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         // Create AbortController for THIS attempt
         const abortController = new AbortController()
-        
+
         // If external signal is provided, abort our controller when it aborts
         const externalAbortHandler = () => abortController.abort()
         signal?.addEventListener('abort', externalAbortHandler)
-        
+
         // Set timeout to abort the request
         const timeoutId = setTimeout(() => {
             console.log(`📚 [getDocuments] Aborting query for "${filter}" after ${QUERY_TIMEOUT_MS}ms`)
@@ -137,10 +137,17 @@ export async function getDocuments(
             }
 
             console.log('📚 [getDocuments] Executing Supabase query...')
-            
-            // Execute with abort signal
-            const { data, error } = await query.abortSignal(abortController.signal)
-            
+
+            // Create abort promise that rejects when signal fires
+            const abortPromise = new Promise<never>((_, reject) => {
+                abortController.signal.addEventListener('abort', () => {
+                    reject(new DOMException('Aborted', 'AbortError'))
+                })
+            })
+
+            // Race between query and abort (note: .abortSignal() may not exist in all versions)
+            const { data, error } = await Promise.race([query, abortPromise])
+
             // Clear timeout since we got a response
             clearTimeout(timeoutId)
             signal?.removeEventListener('abort', externalAbortHandler)
@@ -150,7 +157,7 @@ export async function getDocuments(
 
             if (error) {
                 console.error(`📚 [getDocuments] ❌ Error for filter "${filter}":`, error)
-                
+
                 if (isAuthError(error) && attempt < MAX_RETRIES) {
                     console.log('📚 [getDocuments] Auth error detected, refreshing session for retry...')
                     const { refreshSession } = await import('@/lib/sessionManager')
@@ -176,34 +183,34 @@ export async function getDocuments(
             // Clean up
             clearTimeout(timeoutId)
             signal?.removeEventListener('abort', externalAbortHandler)
-            
+
             const elapsed = Date.now() - startTime
             const error = err as Error
             lastError = error
-            
+
             // Check if it was aborted
             if (error.name === 'AbortError' || error.message.includes('aborted')) {
                 console.log(`📚 [getDocuments] Query aborted for "${filter}" after ${elapsed}ms (attempt ${attempt})`)
-                
+
                 // If it was a timeout abort (not external), warm up connection and retry
                 if (!signal?.aborted && attempt < MAX_RETRIES) {
                     console.log('📚 [getDocuments] Timeout detected - warming up connection before retry...')
                     await warmUpConnection()
                     continue
                 }
-                
+
                 throw new Error(`Query for "${filter}" was cancelled`)
             }
-            
+
             console.error(`📚 [getDocuments] ❌ Exception after ${elapsed}ms (attempt ${attempt}):`, error.message)
-            
+
             if (isAuthError(error) && attempt < MAX_RETRIES) {
                 console.log('📚 [getDocuments] Auth error detected, refreshing session for retry...')
                 const { refreshSession } = await import('@/lib/sessionManager')
                 await refreshSession()
                 continue
             }
-            
+
             if (attempt === MAX_RETRIES) {
                 throw error
             }
@@ -231,19 +238,29 @@ export async function getDocument(id: string, signal?: AbortSignal): Promise<Doc
     const abortController = new AbortController()
     const externalAbortHandler = () => abortController.abort()
     signal?.addEventListener('abort', externalAbortHandler)
-    
+
     const timeoutId = setTimeout(() => {
         console.log('📄 [getDocument] Aborting query after 10s')
         abortController.abort()
     }, 10000)
 
     try {
-        const { data, error } = await supabase
+        // Build the query
+        const queryPromise = supabase
             .from('documents')
             .select('*')
             .eq('id', id)
             .single()
-            .abortSignal(abortController.signal)
+
+        // Create abort promise that rejects when signal fires
+        const abortPromise = new Promise<never>((_, reject) => {
+            abortController.signal.addEventListener('abort', () => {
+                reject(new DOMException('Aborted', 'AbortError'))
+            })
+        })
+
+        // Race between query and abort
+        const { data, error } = await Promise.race([queryPromise, abortPromise])
 
         clearTimeout(timeoutId)
         signal?.removeEventListener('abort', externalAbortHandler)
@@ -252,11 +269,11 @@ export async function getDocument(id: string, signal?: AbortSignal): Promise<Doc
 
         if (error) {
             console.error('📄 [getDocument] Error:', error)
-            
+
             if (isAuthError(error)) {
                 throw new Error('Session expired. Please refresh the page.')
             }
-            
+
             return null
         }
 
@@ -265,12 +282,12 @@ export async function getDocument(id: string, signal?: AbortSignal): Promise<Doc
     } catch (err) {
         clearTimeout(timeoutId)
         signal?.removeEventListener('abort', externalAbortHandler)
-        
+
         const error = err as Error
         if (error.name === 'AbortError' || error.message.includes('aborted')) {
             // Timeout detected - trigger connection warm-up for next request
             console.log('📄 [getDocument] Timeout detected - triggering connection warm-up...')
-            warmUpConnection().catch(() => {}) // Fire and forget
+            warmUpConnection().catch(() => { }) // Fire and forget
             throw new Error('Document fetch was cancelled')
         }
         throw error

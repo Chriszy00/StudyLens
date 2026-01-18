@@ -144,19 +144,29 @@ export async function getSummary(documentId: string, signal?: AbortSignal): Prom
     const abortController = new AbortController()
     const externalAbortHandler = () => abortController.abort()
     signal?.addEventListener('abort', externalAbortHandler)
-    
+
     const timeoutId = setTimeout(() => {
         console.log('📝 [getSummary] Aborting query after 10s')
         abortController.abort()
     }, 10000)
 
     try {
-        const { data, error } = await supabase
+        // Build the query (note: .abortSignal() may not exist in all supabase-js versions)
+        const queryPromise = supabase
             .from('summaries')
             .select('*')
             .eq('document_id', documentId)
             .single()
-            .abortSignal(abortController.signal)
+
+        // Create abort promise that rejects when signal fires
+        const abortPromise = new Promise<never>((_, reject) => {
+            abortController.signal.addEventListener('abort', () => {
+                reject(new DOMException('Aborted', 'AbortError'))
+            })
+        })
+
+        // Race between query and abort
+        const { data, error } = await Promise.race([queryPromise, abortPromise])
 
         clearTimeout(timeoutId)
         signal?.removeEventListener('abort', externalAbortHandler)
@@ -168,12 +178,12 @@ export async function getSummary(documentId: string, signal?: AbortSignal): Prom
                 console.log('📝 [getSummary] No summary found (PGRST116)')
                 return null
             }
-            
+
             if (isAuthError(error)) {
                 console.error('📝 [getSummary] Auth error - session may have expired')
                 throw new Error('Session expired. Please refresh the page.')
             }
-            
+
             console.error('📝 [getSummary] Error:', error)
             throw error
         }
@@ -183,12 +193,12 @@ export async function getSummary(documentId: string, signal?: AbortSignal): Prom
     } catch (err) {
         clearTimeout(timeoutId)
         signal?.removeEventListener('abort', externalAbortHandler)
-        
+
         const error = err as Error
         if (error.name === 'AbortError' || error.message.includes('aborted')) {
             // Timeout detected - trigger connection warm-up for next request
             console.log('📝 [getSummary] Timeout detected - triggering connection warm-up...')
-            warmUpConnection().catch(() => {}) // Fire and forget
+            warmUpConnection().catch(() => { }) // Fire and forget
             throw new Error('Summary fetch was cancelled')
         }
         throw error

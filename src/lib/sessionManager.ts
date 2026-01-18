@@ -27,7 +27,6 @@ const EXPIRY_BUFFER_SECONDS = 300 // 5 minutes
 
 // Cached session - ONLY set by AuthContext, NEVER by getValidSession
 let cachedSession: Session | null = null
-let cacheTimestamp: number = 0
 
 // Lock for refresh operations only (not for getValidSession!)
 let refreshInProgress = false
@@ -78,38 +77,48 @@ export function isSessionExpired(session: Session | null, bufferSeconds = EXPIRY
  */
 export async function warmUpConnection(): Promise<boolean> {
     const now = Date.now()
-    
+
     // Don't warm up too frequently
     if (now - lastWarmUpTime < WARM_UP_COOLDOWN_MS) {
         console.log('🔌 [SessionManager] Skipping warm-up (cooldown)')
         return true
     }
-    
+
     // If warm-up already in progress, wait for it
     if (warmUpInProgress && warmUpPromise) {
         console.log('🔌 [SessionManager] Waiting for existing warm-up...')
         return warmUpPromise
     }
-    
+
     warmUpInProgress = true
     console.log('🔌 [SessionManager] Warming up Supabase connection...')
-    
+
     warmUpPromise = (async (): Promise<boolean> => {
         try {
             // Use a very short timeout - we just want to ping, not wait forever
             const controller = new AbortController()
             const timeoutId = setTimeout(() => controller.abort(), 3000)
-            
+
             // Lightweight query - just check if we can reach Supabase
             // This forces a new TCP connection if the old one is stale
-            const { error } = await supabase
+            // Note: We don't use .abortSignal() here as it may not be available in all versions
+            const queryPromise = supabase
                 .from('documents')
                 .select('id')
                 .limit(1)
-                .abortSignal(controller.signal)
-            
+
+            // Race between query and abort signal
+            const { error } = await Promise.race([
+                queryPromise,
+                new Promise<never>((_, reject) => {
+                    controller.signal.addEventListener('abort', () => {
+                        reject(new DOMException('Aborted', 'AbortError'))
+                    })
+                })
+            ])
+
             clearTimeout(timeoutId)
-            
+
             if (error) {
                 // PGRST116 = "no rows" which is fine - connection worked
                 if (error.code === 'PGRST116') {
@@ -122,11 +131,11 @@ export async function warmUpConnection(): Promise<boolean> {
                 lastWarmUpTime = now
                 return false
             }
-            
+
             console.log('🔌 [SessionManager] ✅ Connection warm-up successful')
             lastWarmUpTime = now
             return true
-            
+
         } catch (err) {
             const error = err as Error
             if (error.name === 'AbortError') {
@@ -142,7 +151,7 @@ export async function warmUpConnection(): Promise<boolean> {
             warmUpPromise = null
         }
     })()
-    
+
     return warmUpPromise
 }
 
@@ -161,14 +170,14 @@ export function getValidSession(): Session | null {
         console.log('🔐 [SessionManager] No cached session available')
         return null
     }
-    
+
     // Check if session is expired
     if (isSessionExpired(cachedSession, 60)) { // Use shorter buffer for reads
         console.log('🔐 [SessionManager] Cached session is expired')
         // Don't return null - let the caller try with the expired token
         // Supabase might still accept it, or RLS will reject and we'll get an auth error
     }
-    
+
     return cachedSession
 }
 
@@ -182,7 +191,7 @@ export async function ensureValidSession(): Promise<Session | null> {
         console.log('🔐 [SessionManager] Using valid cached session')
         return cachedSession
     }
-    
+
     // If no session or expired, try to refresh
     console.log('🔐 [SessionManager] Session needs refresh')
     return refreshSession()
@@ -201,7 +210,7 @@ export async function refreshSession(): Promise<Session | null> {
         try {
             return await Promise.race([
                 refreshPromise,
-                new Promise<null>((resolve) => 
+                new Promise<null>((resolve) =>
                     setTimeout(() => {
                         console.warn('⚠️ [SessionManager] Refresh wait timed out')
                         resolve(null)
@@ -212,10 +221,10 @@ export async function refreshSession(): Promise<Session | null> {
             return cachedSession
         }
     }
-    
+
     refreshInProgress = true
     console.log('🔐 [SessionManager] Refreshing session...')
-    
+
     refreshPromise = (async (): Promise<Session | null> => {
         try {
             // Create a timeout promise
@@ -225,29 +234,28 @@ export async function refreshSession(): Promise<Session | null> {
                     resolve(null)
                 }, 10000) // 10 second timeout
             })
-            
+
             // Race between refresh and timeout
             const result = await Promise.race([
                 supabase.auth.refreshSession(),
                 timeoutPromise.then(() => ({ data: { session: null }, error: new Error('Timeout') }))
             ])
-            
+
             if ('error' in result && result.error) {
                 console.error('❌ [SessionManager] Refresh failed:', result.error.message)
                 return cachedSession // Return stale session as fallback
             }
-            
+
             if ('data' in result && result.data?.session) {
                 console.log('✅ [SessionManager] Session refreshed successfully')
                 // Update cache
                 cachedSession = result.data.session
-                cacheTimestamp = Date.now()
                 return result.data.session
             }
-            
+
             console.warn('⚠️ [SessionManager] Refresh returned no session')
             return cachedSession
-            
+
         } catch (err) {
             console.error('❌ [SessionManager] Refresh error:', err)
             return cachedSession // Return stale session as fallback
@@ -256,7 +264,7 @@ export async function refreshSession(): Promise<Session | null> {
             refreshPromise = null
         }
     })()
-    
+
     return refreshPromise
 }
 
@@ -269,9 +277,8 @@ export async function refreshSession(): Promise<Session | null> {
  */
 export function setSessionCache(session: Session | null): void {
     cachedSession = session
-    cacheTimestamp = Date.now()
     if (session) {
-        console.log('🔐 [SessionManager] Session cache set (expires:', 
+        console.log('🔐 [SessionManager] Session cache set (expires:',
             new Date((session.expires_at || 0) * 1000).toISOString(), ')')
     } else {
         console.log('🔐 [SessionManager] Session cache cleared')
@@ -283,7 +290,6 @@ export function setSessionCache(session: Session | null): void {
  */
 export function clearSessionCache(): void {
     cachedSession = null
-    cacheTimestamp = 0
     console.log('🔐 [SessionManager] Session cache cleared')
 }
 
@@ -322,10 +328,10 @@ export function isAuthError(error: Error | unknown): boolean {
  */
 export function setupVisibilityRefresh(): () => void {
     console.log('🔐 [SessionManager] Setting up visibility refresh with connection warm-up')
-    
+
     let lastHiddenTime = 0
     const MIN_HIDDEN_TIME_MS = 30000 // Only warm up if hidden for > 30 seconds
-    
+
     const handleVisibilityChange = () => {
         if (document.visibilityState === 'hidden') {
             lastHiddenTime = Date.now()
@@ -333,7 +339,7 @@ export function setupVisibilityRefresh(): () => void {
         } else if (document.visibilityState === 'visible') {
             const hiddenDuration = Date.now() - lastHiddenTime
             console.log(`🔐 [SessionManager] Tab visible (was hidden for ${Math.round(hiddenDuration / 1000)}s)`)
-            
+
             // Only warm up if hidden for a significant time
             if (lastHiddenTime > 0 && hiddenDuration > MIN_HIDDEN_TIME_MS) {
                 console.log('🔌 [SessionManager] Triggering connection warm-up after idle...')
@@ -343,9 +349,9 @@ export function setupVisibilityRefresh(): () => void {
             }
         }
     }
-    
+
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    
+
     return () => {
         document.removeEventListener('visibilitychange', handleVisibilityChange)
         console.log('🔐 [SessionManager] Visibility listener removed')

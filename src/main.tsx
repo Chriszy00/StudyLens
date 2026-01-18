@@ -32,33 +32,33 @@ if (import.meta.env.DEV) {
     __supabase: typeof supabase
     __runSessionTest: () => Promise<void>
   }
-  
+
   testWindow.__sessionManager = sessionManager
   testWindow.__documents = documentsService
   testWindow.__ai = aiService
   testWindow.__supabase = supabase
-  
+
   // Add a convenient test function
   testWindow.__runSessionTest = async () => {
     console.log('🧪 ════════════════════════════════════════')
     console.log('🧪 SESSION MANAGER TEST (using app modules)')
     console.log('🧪 ════════════════════════════════════════')
-    
+
     const sm = testWindow.__sessionManager
     const docs = testWindow.__documents
-    
+
     // Test 1: Check sync behavior
     console.log('\n🧪 Test 1: getValidSession is synchronous')
     const start1 = Date.now()
     const session = sm.getValidSession()
     console.log(`   Result: ${session ? '✅ Session found' : '⚠️ No session'} (${Date.now() - start1}ms)`)
-    
+
     // Test 2: Multiple sync calls
     console.log('\n🧪 Test 2: 10 rapid sync calls')
     const start2 = Date.now()
     for (let i = 0; i < 10; i++) sm.getValidSession()
     console.log(`   Result: ✅ ${Date.now() - start2}ms for 10 calls`)
-    
+
     // Test 3: Single document fetch
     console.log('\n🧪 Test 3: Single document fetch')
     const start3 = Date.now()
@@ -71,7 +71,7 @@ if (import.meta.env.DEV) {
     } catch (e) {
       console.error(`   Result: ❌ ${(e as Error).message} after ${Date.now() - start3}ms`)
     }
-    
+
     // Test 4: Concurrent fetches (the problem scenario)
     console.log('\n🧪 Test 4: 4 concurrent fetches (simulates filter navigation)')
     const start4 = Date.now()
@@ -94,12 +94,12 @@ if (import.meta.env.DEV) {
     } catch (e) {
       console.error(`   Result: ❌ ${(e as Error).message} after ${Date.now() - start4}ms`)
     }
-    
+
     // Test 5: Check Supabase connection directly
     console.log('\n🧪 Test 5: Direct Supabase query')
     const start5 = Date.now()
     try {
-      const { data, error } = await Promise.race([
+      const { data: _data, error } = await Promise.race([
         testWindow.__supabase.from('documents').select('id').limit(1),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout after 5s')), 5000))
       ]) as { data: unknown, error: unknown }
@@ -111,12 +111,12 @@ if (import.meta.env.DEV) {
     } catch (e) {
       console.error(`   Result: ❌ ${(e as Error).message} after ${Date.now() - start5}ms`)
     }
-    
+
     console.log('\n🧪 ════════════════════════════════════════')
     console.log('🧪 TEST COMPLETE')
     console.log('🧪 ════════════════════════════════════════')
   }
-  
+
   console.log('🧪 Test utilities loaded. Run __runSessionTest() in console.')
 }
 

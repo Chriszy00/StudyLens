@@ -19,7 +19,7 @@
  *   testSessionManager()
  */
 
-import { getValidSession, clearSessionCache, setSessionCache, ensureValidSession, refreshSession } from '@/lib/sessionManager'
+import { getValidSession, clearSessionCache, setSessionCache, refreshSession } from '@/lib/sessionManager'
 import { getDocuments } from '@/services/documents'
 import { supabase } from '@/lib/supabase'
 
@@ -38,41 +38,41 @@ export async function testSessionManager(): Promise<TestResult[]> {
     console.log('🧪 ════════════════════════════════════════')
     console.log('🧪 SESSION MANAGER TEST SUITE')
     console.log('🧪 ════════════════════════════════════════')
-    
+
     const results: TestResult[] = []
-    
+
     // Test 1: getValidSession is synchronous
     results.push(await testSyncGetValidSession())
-    
+
     // Test 2: Cache population and retrieval
     results.push(await testCachePopulation())
-    
+
     // Test 3: Concurrent requests don't hang
     results.push(await testConcurrentRequests())
-    
+
     // Test 4: Request with cleared cache
     results.push(await testClearedCacheRequest())
-    
+
     // Test 5: Refresh has timeout protection
     results.push(await testRefreshTimeout())
-    
+
     // Summary
     console.log('\n🧪 ════════════════════════════════════════')
     console.log('🧪 TEST SUMMARY')
     console.log('🧪 ════════════════════════════════════════')
-    
+
     const passed = results.filter(r => r.passed).length
     const failed = results.filter(r => !r.passed).length
-    
+
     results.forEach(r => {
         const status = r.passed ? '✅' : '❌'
         console.log(`${status} ${r.name} (${r.duration}ms)`)
         if (r.error) console.log(`   Error: ${r.error}`)
         if (r.details) console.log(`   ${r.details}`)
     })
-    
+
     console.log(`\n🧪 Results: ${passed} passed, ${failed} failed`)
-    
+
     return results
 }
 
@@ -82,11 +82,11 @@ export async function testSessionManager(): Promise<TestResult[]> {
 async function testSyncGetValidSession(): Promise<TestResult> {
     const name = 'getValidSession is synchronous'
     const start = Date.now()
-    
+
     try {
         // getValidSession should return immediately (Session | null), not a Promise
         const result = getValidSession()
-        
+
         // Check it's not a Promise
         if (result instanceof Promise) {
             return {
@@ -96,7 +96,7 @@ async function testSyncGetValidSession(): Promise<TestResult> {
                 error: 'getValidSession returned a Promise instead of Session | null'
             }
         }
-        
+
         return {
             name,
             passed: true,
@@ -119,11 +119,11 @@ async function testSyncGetValidSession(): Promise<TestResult> {
 async function testCachePopulation(): Promise<TestResult> {
     const name = 'Cache population and retrieval'
     const start = Date.now()
-    
+
     try {
         // Get current session from Supabase (the only place we should call this)
         const { data: { session } } = await supabase.auth.getSession()
-        
+
         if (!session) {
             return {
                 name,
@@ -132,10 +132,10 @@ async function testCachePopulation(): Promise<TestResult> {
                 error: 'No session available - please sign in first'
             }
         }
-        
+
         // Clear the cache
         clearSessionCache()
-        
+
         // Verify cache is empty
         const emptyResult = getValidSession()
         if (emptyResult !== null) {
@@ -146,10 +146,10 @@ async function testCachePopulation(): Promise<TestResult> {
                 error: 'Cache was not cleared properly'
             }
         }
-        
+
         // Populate the cache
         setSessionCache(session)
-        
+
         // Verify cache has session
         const cachedResult = getValidSession()
         if (!cachedResult) {
@@ -160,7 +160,7 @@ async function testCachePopulation(): Promise<TestResult> {
                 error: 'Cache was not populated properly'
             }
         }
-        
+
         return {
             name,
             passed: true,
@@ -185,21 +185,21 @@ async function testConcurrentRequests(): Promise<TestResult> {
     const name = 'Concurrent requests complete without hanging'
     const start = Date.now()
     const TIMEOUT_MS = 20000 // 20 second timeout
-    
+
     try {
         // Ensure we have a valid session first
         const { data: { session } } = await supabase.auth.getSession()
         if (session) {
             setSessionCache(session)
         }
-        
+
         console.log('🧪 Starting 5 concurrent document fetches...')
-        
+
         // Create a timeout promise
         const timeoutPromise = new Promise<never>((_, reject) => {
             setTimeout(() => reject(new Error('TIMEOUT: Requests hung for more than 20 seconds!')), TIMEOUT_MS)
         })
-        
+
         // Fire 5 concurrent requests (simulates rapid filter switching)
         const requests = Promise.all([
             getDocuments('all').catch(e => ({ error: e.message })),
@@ -208,25 +208,25 @@ async function testConcurrentRequests(): Promise<TestResult> {
             getDocuments('recent').catch(e => ({ error: e.message })),
             getDocuments('all').catch(e => ({ error: e.message })),
         ])
-        
+
         // Race between requests and timeout
         const results = await Promise.race([requests, timeoutPromise])
-        
+
         const duration = Date.now() - start
         console.log(`🧪 All 5 requests completed in ${duration}ms`)
-        
+
         // Check for errors
-        const errors = results.filter((r: unknown) => r && typeof r === 'object' && 'error' in r)
+        const errors = results.filter((r: unknown) => r && typeof r === 'object' && 'error' in r) as Array<{ error: string }>
         if (errors.length > 0) {
             return {
                 name,
                 passed: false,
                 duration,
                 error: `${errors.length}/5 requests failed`,
-                details: errors.map((e: { error: string }) => e.error).join(', ')
+                details: errors.map((e) => e.error).join(', ')
             }
         }
-        
+
         return {
             name,
             passed: true,
@@ -250,31 +250,31 @@ async function testClearedCacheRequest(): Promise<TestResult> {
     const name = 'Cleared cache request fails fast (no hang)'
     const start = Date.now()
     const TIMEOUT_MS = 5000
-    
+
     try {
         // Save current session
         const { data: { session: originalSession } } = await supabase.auth.getSession()
-        
+
         // Clear cache to simulate "idle" state
         clearSessionCache()
-        
+
         console.log('🧪 Testing request with cleared cache...')
-        
+
         // This should fail fast, not hang
         const timeoutPromise = new Promise<never>((_, reject) => {
             setTimeout(() => reject(new Error('TIMEOUT: Request hung instead of failing fast!')), TIMEOUT_MS)
         })
-        
+
         try {
             await Promise.race([
                 getDocuments('all'),
                 timeoutPromise
             ])
-            
+
             // If we get here, the request succeeded (user might still be authenticated)
             // Restore session cache
             if (originalSession) setSessionCache(originalSession)
-            
+
             return {
                 name,
                 passed: true,
@@ -284,10 +284,10 @@ async function testClearedCacheRequest(): Promise<TestResult> {
         } catch (requestError) {
             // Restore session cache
             if (originalSession) setSessionCache(originalSession)
-            
+
             const duration = Date.now() - start
             const errorMsg = requestError instanceof Error ? requestError.message : String(requestError)
-            
+
             // Check if it was a timeout or a proper error
             if (errorMsg.includes('TIMEOUT')) {
                 return {
@@ -297,7 +297,7 @@ async function testClearedCacheRequest(): Promise<TestResult> {
                     error: 'Request HUNG instead of failing fast!'
                 }
             }
-            
+
             // Fast failure is expected
             return {
                 name,
@@ -323,21 +323,21 @@ async function testRefreshTimeout(): Promise<TestResult> {
     const name = 'refreshSession has timeout protection'
     const start = Date.now()
     const MAX_EXPECTED_MS = 15000 // Should complete within 15 seconds (timeout is 10s)
-    
+
     try {
         console.log('🧪 Testing refreshSession timeout protection...')
-        
+
         const timeoutPromise = new Promise<never>((_, reject) => {
             setTimeout(() => reject(new Error('TIMEOUT: refreshSession hung for more than 15 seconds!')), MAX_EXPECTED_MS)
         })
-        
+
         const result = await Promise.race([
             refreshSession(),
             timeoutPromise
         ])
-        
+
         const duration = Date.now() - start
-        
+
         return {
             name,
             passed: true,
