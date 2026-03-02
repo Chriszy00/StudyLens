@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase'
+import { supabase, ensureFreshSession } from '@/lib/supabase'
 
 export interface Flashcard {
     id: string
@@ -38,74 +38,16 @@ export interface ConceptMastery {
 }
 
 /**
- * CACHED USER SESSION
- * -------------------
- * Instead of calling supabase.auth.getSession() on every function (which is a network call!),
- * we cache the user info and refresh it only when needed.
- * 
- * WHY THIS MATTERS:
- * - getSession() can take 100-500ms each call
- * - Multiple simultaneous calls can cause race conditions
- * - If token is refreshing, getSession() can hang
- * 
- * With caching:
- * - First call gets the session
- * - Subsequent calls within 30 seconds use cached value
- * - Auth state changes (via onAuthStateChange) invalidate the cache
- */
-let cachedUserId: string | null = null
-let cacheTimestamp: number = 0
-const CACHE_DURATION_MS = 30000 // 30 seconds
-
-// Listen for auth changes to invalidate cache
-supabase.auth.onAuthStateChange((event) => {
-    if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
-        cachedUserId = null
-        cacheTimestamp = 0
-    }
-})
-
-/**
- * Get the current user ID with caching
- * This is MUCH faster than calling getSession() every time
+ * Get the current user ID via ensureFreshSession (deduplicated, with timeout).
  */
 async function getCurrentUserId(): Promise<string> {
-    const now = Date.now()
-
-    // 🔍 DIAGNOSTIC LOGGING - Remove after debugging
-    console.log('🔐 [getCurrentUserId/learning] Called. Cache valid:', !!(cachedUserId && (now - cacheTimestamp) < CACHE_DURATION_MS))
-
-    // Use cached value if still valid
-    if (cachedUserId && (now - cacheTimestamp) < CACHE_DURATION_MS) {
-        console.log('🔐 [getCurrentUserId/learning] Using cached userId:', cachedUserId.substring(0, 8) + '...')
-        return cachedUserId
-    }
-
-    console.log('🔐 [getCurrentUserId/learning] Cache miss, calling getSession()...')
-    const startTime = Date.now()
-
-    // Get fresh session
-    const { data: { session }, error } = await supabase.auth.getSession()
-
-    console.log('🔐 [getCurrentUserId/learning] getSession() completed in', Date.now() - startTime, 'ms')
-
-    if (error) {
-        console.error('🔐 [getCurrentUserId/learning] Auth error:', error)
-        throw new Error('Authentication error')
-    }
+    const session = await ensureFreshSession()
 
     if (!session?.user) {
-        console.error('🔐 [getCurrentUserId/learning] No session/user found')
         throw new Error('Not authenticated')
     }
 
-    // Cache the result
-    cachedUserId = session.user.id
-    cacheTimestamp = now
-
-    console.log('🔐 [getCurrentUserId/learning] Cached new userId:', cachedUserId.substring(0, 8) + '...')
-
-    return cachedUserId
+    return session.user.id
 }
 
 /**

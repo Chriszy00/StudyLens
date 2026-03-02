@@ -1,5 +1,4 @@
-import { supabase } from '@/lib/supabase'
-import { ensureValidSession, getValidSession, isAuthError, warmUpConnection } from '@/lib/sessionManager'
+import { supabase, ensureFreshSession, isAuthError } from '@/lib/supabase'
 
 /**
  * Citation for grounding AI output in source document
@@ -71,14 +70,12 @@ export async function processDocument(
         generateQuestions: true,
     }
 ): Promise<ProcessDocumentResponse> {
-    // Ensure valid session before making edge function call
-    // This prevents the "infinite loading after idle" issue
-    console.log('🤖 [AI] Validating session before AI processing...')
-    const session = await ensureValidSession()
+    console.log('[AI] Validating session before AI processing...')
+    const session = await ensureFreshSession()
     if (!session) {
         throw new Error('Session expired. Please sign in again to process documents.')
     }
-    console.log('✅ [AI] Session valid, invoking edge function...')
+    console.log('[AI] Session valid, invoking edge function...')
 
     const { data, error } = await supabase.functions.invoke('process-document', {
         body: { documentId, options },
@@ -125,84 +122,28 @@ export async function processDocument(
 }
 
 /**
- * Get the summary for a document
- * 
- * FIX v3: Added AbortController support to cancel stale requests
+ * Get the summary for a document.
+ * Timeout and dead-socket handling is done by the resilient fetch wrapper in supabase.ts.
  */
 export async function getSummary(documentId: string, signal?: AbortSignal): Promise<Summary | null> {
-    console.log('📝 [getSummary] Called with documentId:', documentId)
-    const startTime = Date.now()
+    const { data, error } = await supabase
+        .from('summaries')
+        .select('*')
+        .eq('document_id', documentId)
+        .abortSignal(signal!)
+        .single()
 
-    // Session check
-    const session = getValidSession()
-    if (!session) {
-        console.warn('📝 [getSummary] No cached session - returning null')
-        throw new Error('Session expired. Please refresh the page.')
-    }
-
-    // Create abort controller with timeout
-    const abortController = new AbortController()
-    const externalAbortHandler = () => abortController.abort()
-    signal?.addEventListener('abort', externalAbortHandler)
-
-    const timeoutId = setTimeout(() => {
-        console.log('📝 [getSummary] Aborting query after 10s')
-        abortController.abort()
-    }, 10000)
-
-    try {
-        // Build the query (note: .abortSignal() may not exist in all supabase-js versions)
-        const queryPromise = supabase
-            .from('summaries')
-            .select('*')
-            .eq('document_id', documentId)
-            .single()
-
-        // Create abort promise that rejects when signal fires
-        const abortPromise = new Promise<never>((_, reject) => {
-            abortController.signal.addEventListener('abort', () => {
-                reject(new DOMException('Aborted', 'AbortError'))
-            })
-        })
-
-        // Race between query and abort
-        const { data, error } = await Promise.race([queryPromise, abortPromise])
-
-        clearTimeout(timeoutId)
-        signal?.removeEventListener('abort', externalAbortHandler)
-
-        console.log('📝 [getSummary] Supabase query completed in', Date.now() - startTime, 'ms')
-
-        if (error) {
-            if (error.code === 'PGRST116') {
-                console.log('📝 [getSummary] No summary found (PGRST116)')
-                return null
-            }
-
-            if (isAuthError(error)) {
-                console.error('📝 [getSummary] Auth error - session may have expired')
-                throw new Error('Session expired. Please refresh the page.')
-            }
-
-            console.error('📝 [getSummary] Error:', error)
-            throw error
+    if (error) {
+        if (error.code === 'PGRST116') {
+            return null
         }
-
-        console.log('📝 [getSummary] Returning summary with status:', data?.processing_status)
-        return data as Summary
-    } catch (err) {
-        clearTimeout(timeoutId)
-        signal?.removeEventListener('abort', externalAbortHandler)
-
-        const error = err as Error
-        if (error.name === 'AbortError' || error.message.includes('aborted')) {
-            // Timeout detected - trigger connection warm-up for next request
-            console.log('📝 [getSummary] Timeout detected - triggering connection warm-up...')
-            warmUpConnection().catch(() => { }) // Fire and forget
-            throw new Error('Summary fetch was cancelled')
+        if (isAuthError(error)) {
+            throw new Error('Session expired. Please refresh the page.')
         }
         throw error
     }
+
+    return data as Summary
 }
 
 /**
