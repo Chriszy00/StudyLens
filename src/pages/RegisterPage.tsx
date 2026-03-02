@@ -1,8 +1,9 @@
 import { useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 
 export function RegisterPage() {
+    const navigate = useNavigate()
     const [showPassword, setShowPassword] = useState(false)
     const [showConfirmPassword, setShowConfirmPassword] = useState(false)
     const [fullName, setFullName] = useState("")
@@ -12,7 +13,6 @@ export function RegisterPage() {
     const [agreeToTerms, setAgreeToTerms] = useState(false)
     const [error, setError] = useState("")
     const [loading, setLoading] = useState(false)
-    const [success, setSuccess] = useState(false)
     const { signUp, signInWithGoogle } = useAuth()
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -40,7 +40,7 @@ export function RegisterPage() {
         if (error) {
             setError(error.message)
         } else {
-            setSuccess(true)
+            navigate("/library")
         }
     }
 
@@ -49,32 +49,6 @@ export function RegisterPage() {
         if (error) {
             setError(error.message)
         }
-    }
-
-    // Show success message after registration
-    if (success) {
-        return (
-            <div className="min-h-screen w-full bg-[var(--background)] flex items-center justify-center p-8">
-                <div className="w-full max-w-md text-center">
-                    <div className="bg-[var(--card)] rounded-xl p-8 border border-[var(--border)] shadow-sm">
-                        <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                            <span className="material-symbols-outlined text-emerald-500 text-3xl">check_circle</span>
-                        </div>
-                        <h2 className="text-2xl font-bold mb-2">Check your email</h2>
-                        <p className="text-[var(--muted-foreground)] mb-6">
-                            We've sent a confirmation link to <strong>{email}</strong>. Click the link to activate your account.
-                        </p>
-                        <Link
-                            to="/login"
-                            className="inline-flex items-center justify-center gap-2 text-primary font-semibold hover:underline"
-                        >
-                            <span className="material-symbols-outlined text-sm">arrow_back</span>
-                            Back to Login
-                        </Link>
-                    </div>
-                </div>
-            </div>
-        )
     }
 
     return (
