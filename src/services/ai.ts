@@ -125,12 +125,11 @@ export async function processDocument(
  * Get the summary for a document.
  * Timeout and dead-socket handling is done by the resilient fetch wrapper in supabase.ts.
  */
-export async function getSummary(documentId: string, signal?: AbortSignal): Promise<Summary | null> {
+export async function getSummary(documentId: string): Promise<Summary | null> {
     const { data, error } = await supabase
         .from('summaries')
         .select('*')
         .eq('document_id', documentId)
-        .abortSignal(signal!)
         .single()
 
     if (error) {

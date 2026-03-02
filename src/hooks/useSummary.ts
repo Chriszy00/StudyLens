@@ -42,12 +42,8 @@ export function useSummary(documentId: string | null | undefined) {
 
     return useQuery({
         queryKey: summaryKeys.detail(documentId || ''),
-        queryFn: async ({ signal }) => {
-            console.log('🔍 [useSummary] queryFn EXECUTING for documentId:', documentId)
-            // FIX: Pass the abort signal to getSummary
-            const result = await getSummary(documentId!, signal)
-            console.log('🔍 [useSummary] queryFn RESULT:', result ? `Got summary (status: ${result.processing_status})` : 'No summary')
-            return result
+        queryFn: async () => {
+            return getSummary(documentId!)
         },
         enabled: !!documentId,
 

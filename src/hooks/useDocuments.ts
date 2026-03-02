@@ -25,12 +25,7 @@ export const documentKeys = {
 export function useDocuments(filter: DocumentFilter = 'all') {
     return useQuery({
         queryKey: documentKeys.list(filter),
-        queryFn: async ({ signal }) => {
-            if (signal?.aborted) {
-                throw new Error('Query cancelled')
-            }
-            return getDocuments(filter, signal)
-        },
+        queryFn: () => getDocuments(filter),
         refetchOnMount: 'always',
         staleTime: 1000 * 5,
         retry: 2,
@@ -41,9 +36,7 @@ export function useDocuments(filter: DocumentFilter = 'all') {
 export function useDocument(id: string | null | undefined) {
     return useQuery({
         queryKey: documentKeys.detail(id || ''),
-        queryFn: async ({ signal }) => {
-            return getDocument(id!, signal)
-        },
+        queryFn: () => getDocument(id!),
         enabled: !!id,
     })
 }

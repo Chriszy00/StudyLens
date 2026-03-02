@@ -18,16 +18,11 @@ export interface DocumentWithMeta extends Document {
  */
 export async function getDocuments(
     filter: DocumentFilter = 'all',
-    signal?: AbortSignal
 ): Promise<DocumentWithMeta[]> {
     let query = supabase
         .from('documents')
         .select('id, title, type, storage_path, created_at, updated_at, is_starred, is_draft, read_time_minutes, user_id')
         .order('created_at', { ascending: false })
-
-    if (signal) {
-        query = query.abortSignal(signal)
-    }
 
     switch (filter) {
         case 'starred':
@@ -64,18 +59,12 @@ export async function getDocuments(
 /**
  * Get a single document by ID.
  */
-export async function getDocument(id: string, signal?: AbortSignal): Promise<Document | null> {
-    let query = supabase
+export async function getDocument(id: string): Promise<Document | null> {
+    const { data, error } = await supabase
         .from('documents')
         .select('*')
         .eq('id', id)
         .single()
-
-    if (signal) {
-        query = query.abortSignal(signal)
-    }
-
-    const { data, error } = await query
 
     if (error) {
         if (error.code === 'PGRST116') {
