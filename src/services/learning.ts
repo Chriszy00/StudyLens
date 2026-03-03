@@ -118,14 +118,16 @@ export async function generateFlashcardsFromDocument(documentId: string, userId?
 
 /**
  * Get flashcards due for review
+ * @param documentId - Optional filter to a single document
+ * @param userId - Optional user ID (pass from AuthContext to avoid getSession() hangs)
  */
-export async function getDueFlashcards(documentId?: string): Promise<Flashcard[]> {
-    const userId = await getCurrentUserId()
+export async function getDueFlashcards(documentId?: string, userId?: string): Promise<Flashcard[]> {
+    const effectiveUserId = userId || await getCurrentUserId()
 
     let query = supabase
         .from('flashcards')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', effectiveUserId)
         .lte('next_review_date', new Date().toISOString())
         .order('next_review_date', { ascending: true })
 
@@ -326,19 +328,20 @@ export async function endStudySession(
 
 /**
  * Get study statistics for a user
+ * @param userId - Optional user ID (pass from AuthContext to avoid getSession() hangs)
  */
-export async function getStudyStats(): Promise<{
+export async function getStudyStats(userId?: string): Promise<{
     totalCardsStudied: number
     totalSessionsCompleted: number
     averageAccuracy: number
     streakDays: number
 }> {
-    const userId = await getCurrentUserId()
+    const effectiveUserId = userId || await getCurrentUserId()
 
     const { data: sessions } = await supabase
         .from('study_sessions')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', effectiveUserId)
         .not('ended_at', 'is', null)
 
     if (!sessions || sessions.length === 0) {
@@ -504,20 +507,21 @@ export async function getDocumentMastery(documentId: string): Promise<ConceptMas
 
 /**
  * Get overall mastery statistics for a user
+ * @param userId - Optional user ID (pass from AuthContext to avoid getSession() hangs)
  */
-export async function getOverallMastery(): Promise<{
+export async function getOverallMastery(userId?: string): Promise<{
     totalConcepts: number
     masteredConcepts: number  // WMS >= 80
     learningConcepts: number  // WMS 40-79
     needsWorkConcepts: number // WMS < 40
     averageMastery: number
 }> {
-    const userId = await getCurrentUserId()
+    const effectiveUserId = userId || await getCurrentUserId()
 
     const { data } = await supabase
         .from('concept_mastery')
         .select('mastery_score')
-        .eq('user_id', userId)
+        .eq('user_id', effectiveUserId)
 
     if (!data || data.length === 0) {
         return {
@@ -538,5 +542,86 @@ export async function getOverallMastery(): Promise<{
         needsWorkConcepts: scores.filter(s => s < 40).length,
         averageMastery: Math.round(scores.reduce((a, b) => a + b, 0) / scores.length),
     }
+}
+
+// ============================================
+// FLASHCARD DECK SUMMARIES
+// ============================================
+
+export interface DeckSummary {
+    documentId: string
+    documentTitle: string
+    totalCards: number
+    dueCards: number
+    masteredCards: number
+    learningCards: number
+    newCards: number
+    lastStudiedAt: string | null
+}
+
+/**
+ * Get all flashcard decks grouped by document, with per-deck stats.
+ * Uses Supabase's FK join to pull the document title alongside flashcards.
+ * @param userId - Optional user ID (pass from AuthContext to avoid getSession() hangs)
+ */
+export async function getAllFlashcardDecks(userId?: string): Promise<DeckSummary[]> {
+    const effectiveUserId = userId || await getCurrentUserId()
+
+    const { data, error } = await supabase
+        .from('flashcards')
+        .select('id, document_id, repetitions, next_review_date, last_reviewed_at, documents(title)')
+        .eq('user_id', effectiveUserId)
+        .order('created_at', { ascending: false })
+
+    if (error) throw error
+    if (!data || data.length === 0) return []
+
+    const now = new Date().toISOString()
+    const deckMap = new Map<string, DeckSummary>()
+
+    for (const card of data) {
+        const docId = card.document_id
+        const docTitle = (card.documents as unknown as { title: string } | null)?.title || 'Untitled'
+
+        if (!deckMap.has(docId)) {
+            deckMap.set(docId, {
+                documentId: docId,
+                documentTitle: docTitle,
+                totalCards: 0,
+                dueCards: 0,
+                masteredCards: 0,
+                learningCards: 0,
+                newCards: 0,
+                lastStudiedAt: null,
+            })
+        }
+
+        const deck = deckMap.get(docId)!
+        deck.totalCards++
+
+        if (card.next_review_date && card.next_review_date <= now) {
+            deck.dueCards++
+        }
+
+        // Categorize by SM-2 repetition count
+        if (card.repetitions >= 4) {
+            deck.masteredCards++
+        } else if (card.repetitions >= 1) {
+            deck.learningCards++
+        } else {
+            deck.newCards++
+        }
+
+        if (card.last_reviewed_at) {
+            if (!deck.lastStudiedAt || card.last_reviewed_at > deck.lastStudiedAt) {
+                deck.lastStudiedAt = card.last_reviewed_at
+            }
+        }
+    }
+
+    return Array.from(deckMap.values()).sort((a, b) => {
+        if (a.dueCards !== b.dueCards) return b.dueCards - a.dueCards
+        return b.totalCards - a.totalCards
+    })
 }
 

@@ -90,6 +90,13 @@ export function LibraryPage() {
                             New Analysis
                         </button>
                         <button
+                            onClick={() => navigate("/deck")}
+                            className="p-2 rounded-full hover:bg-[var(--muted)] transition-colors"
+                            title="Flashcard Decks"
+                        >
+                            <span className="material-symbols-outlined">style</span>
+                        </button>
+                        <button
                             onClick={() => navigate("/settings")}
                             className="p-2 rounded-full hover:bg-[var(--muted)] transition-colors"
                         >

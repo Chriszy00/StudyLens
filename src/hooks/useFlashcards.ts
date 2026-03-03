@@ -16,10 +16,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/contexts/AuthContext'
 import {
     getFlashcards,
+    getDueFlashcards,
     generateFlashcardsFromDocument,
     recordCardReview,
     startStudySession,
     endStudySession,
+    getStudyStats,
+    getOverallMastery,
+    getAllFlashcardDecks,
 } from '@/services/learning'
 
 // ============================================
@@ -33,6 +37,13 @@ export const flashcardKeys = {
 export const sessionKeys = {
     all: ['study-sessions'] as const,
     active: (documentId: string) => [...sessionKeys.all, 'active', documentId] as const,
+}
+
+export const deckKeys = {
+    all: ['decks'] as const,
+    due: ['flashcards', 'due'] as const,
+    stats: ['study-stats'] as const,
+    mastery: ['overall-mastery'] as const,
 }
 
 // ============================================
@@ -183,5 +194,70 @@ export function useEndSession() {
             cardsStudied: number
             correctCount: number
         }) => endStudySession(sessionId, cardsStudied, correctCount),
+    })
+}
+
+// ============================================
+// DECK & STATS QUERIES
+// ============================================
+
+/**
+ * Fetch all flashcards that are due for review (across all documents).
+ * Used by the FlashcardsPage for cross-document review sessions.
+ */
+export function useDueFlashcards() {
+    const { user } = useAuth()
+
+    return useQuery({
+        queryKey: deckKeys.due,
+        queryFn: () => getDueFlashcards(undefined, user!.id),
+        enabled: !!user,
+        refetchOnWindowFocus: false,
+        staleTime: 1000 * 60 * 2,
+    })
+}
+
+/**
+ * Fetch study statistics (total cards studied, accuracy, streak).
+ * Used by the DeckOverviewPage for the stats grid.
+ */
+export function useStudyStats() {
+    const { user } = useAuth()
+
+    return useQuery({
+        queryKey: deckKeys.stats,
+        queryFn: () => getStudyStats(user!.id),
+        enabled: !!user,
+        staleTime: 1000 * 60 * 5,
+    })
+}
+
+/**
+ * Fetch overall mastery breakdown (mastered / learning / needs work).
+ * Used by the DeckOverviewPage mastery distribution bar.
+ */
+export function useOverallMastery() {
+    const { user } = useAuth()
+
+    return useQuery({
+        queryKey: deckKeys.mastery,
+        queryFn: () => getOverallMastery(user!.id),
+        enabled: !!user,
+        staleTime: 1000 * 60 * 5,
+    })
+}
+
+/**
+ * Fetch all flashcard decks grouped by document.
+ * Each deck includes card counts, due counts, and mastery breakdown.
+ */
+export function useAllFlashcardDecks() {
+    const { user } = useAuth()
+
+    return useQuery({
+        queryKey: deckKeys.all,
+        queryFn: () => getAllFlashcardDecks(user!.id),
+        enabled: !!user,
+        staleTime: 1000 * 60 * 2,
     })
 }

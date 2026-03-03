@@ -30,6 +30,11 @@ export {
     useRecordReview,
     useStartSession,
     useEndSession,
+    useDueFlashcards,
+    useStudyStats,
+    useOverallMastery,
+    useAllFlashcardDecks,
     flashcardKeys,
     sessionKeys,
+    deckKeys,
 } from './useFlashcards'
